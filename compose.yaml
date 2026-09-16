@@ -1,0 +1,73 @@
+name: lark-cup
+x-logs: &logs
+  driver: json-file
+  options: { max-size: "10m", max-file: "3" }
+services:
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: lark
+      POSTGRES_DB: lark
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+    volumes: ["postgres:/var/lib/postgresql/data"]
+    command: ["postgres", "-c", "max_connections=40", "-c", "shared_buffers=256MB", "-c", "work_mem=4MB", "-c", "statement_timeout=10000"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U lark -d lark"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+    mem_limit: 1536m
+    cpus: 1.25
+    restart: unless-stopped
+    logging: *logs
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--maxmemory", "192mb", "--maxmemory-policy", "volatile-lru", "--appendonly", "yes", "--appendfsync", "everysec"]
+    volumes: ["redis:/data"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    mem_limit: 384m
+    cpus: 0.5
+    restart: unless-stopped
+    logging: *logs
+  api:
+    build: { context: ., target: api }
+    env_file: .env
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgres://lark:${POSTGRES_PASSWORD}@db:5432/lark
+      REDIS_URL: redis://redis:6379
+      UPLOAD_DIR: /app/data/uploads
+      TRUST_PROXY: "true"
+    volumes: ["uploads:/app/data/uploads"]
+    depends_on:
+      db: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:3001/api/v1/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 20s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    mem_limit: 1536m
+    cpus: 1.5
+    pids_limit: 100
+    stop_grace_period: 30s
+    restart: unless-stopped
+    logging: *logs
+  web:
+    build: { context: ., target: web }
+    ports: ["${HTTP_PORT:-80}:80", "${PREVIEW_HTTP_PORT:-8081}:8081"]
+    depends_on:
+      api: { condition: service_healthy }
+    mem_limit: 192m
+    cpus: 0.5
+    restart: unless-stopped
+    logging: *logs
+volumes:
+  postgres:
+  redis:
+  uploads:

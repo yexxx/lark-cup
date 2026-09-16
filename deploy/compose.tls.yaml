@@ -1,0 +1,6 @@
+services:
+  web:
+    ports: !override ["80:80", "443:443"]
+    volumes:
+      - ./deploy/nginx.tls.conf:/etc/nginx/nginx.conf:ro
+      - ${TLS_CERT_DIR:-./certs}:/etc/nginx/certs:ro
