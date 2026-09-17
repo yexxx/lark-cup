@@ -95,24 +95,27 @@ export function App() {
         "Idempotency-Key": crypto.randomUUID(),
       });
       await loadQuota();
-      notify("心意送达！这一票，送给好创意。");
+      notify("投票成功！为好创意加一码力。");
       return true;
     } catch (e) {
       notify((e as Error).message);
       return false;
     }
   };
+  useEffect(() => {
+    document.title = `${competition?.title || "超级码力"} · 1024 程序员节内源社区活动`;
+  }, [competition?.title]);
   const isHome = route === "/" || route === "/gallery";
   return (
     <>
       <header className="header">
         <a href="#/" className="brand">
           <span className="brand-icon">
-            <Bird size={26} />
+            <Code2 size={26} />
           </span>
           <strong>
-            {competition?.title || "百灵鸟杯"}
-            <span>让灵感，自然生长</span>
+            {competition?.title || "超级码力"}
+            <span>1024 · 程序员节</span>
           </strong>
         </a>
         <nav className={mobile ? "nav open" : "nav"}>
@@ -122,7 +125,7 @@ export function App() {
           <a className={route === "/ranking" ? "active" : ""} href="#/ranking">
             人气榜单 <ArrowUpRight size={14} />
           </a>
-          <button onClick={() => setInfo("rules")}>赛事规则</button>
+          <button onClick={() => setInfo("rules")}>活动规则</button>
           <button onClick={() => setInfo("prizes")}>奖项设置</button>
           {mobile && user && (
             <button
@@ -200,6 +203,7 @@ export function App() {
           )}
           {isHome || route === "/ranking" ? (
             <Gallery
+              key={route === "/ranking" ? "ranking" : "gallery"}
               ranking={route === "/ranking"}
               quota={quota}
               user={user}
@@ -210,6 +214,7 @@ export function App() {
             />
           ) : route.startsWith("/work/") ? (
             <WorkDetail
+              key={route}
               id={route.split("/")[2]}
               vote={vote}
               quota={quota}
@@ -217,6 +222,7 @@ export function App() {
             />
           ) : route.startsWith("/submit") ? (
             <SubmitPage
+              key={route}
               id={route.split("/")[2]}
               user={user}
               competition={competition}
@@ -247,16 +253,17 @@ export function App() {
       )}
       <footer className="footer">
         <a href="#/" className="brand">
-          <Bird size={25} />
+          <Code2 size={25} />
           <strong>
-            百灵鸟杯<span>LET YOUR IDEAS TAKE FLIGHT.</span>
+            {competition?.title || "超级码力"}
+            <span>1024 程序员节 · 内源社区活动</span>
           </strong>
         </a>
         <div>
           <a href="#/mine">我的作品</a>
-          <button onClick={() => setInfo("rules")}>比赛规则</button>
+          <button onClick={() => setInfo("rules")}>活动规则</button>
           <a href="#/admin">管理后台</a>
-          <span>© 2026 LARK JAM</span>
+          <span>SUPER CODE / 1024</span>
         </div>
       </footer>
       {authOpen && (
@@ -273,7 +280,7 @@ export function App() {
         <Modal
           title={
             info === "rules"
-              ? "赛事规则"
+              ? "活动规则"
               : info === "prizes"
                 ? "奖项设置"
                 : "统一提示词"
@@ -343,7 +350,7 @@ function Login({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   return (
-    <Modal title="欢迎来到百灵鸟杯" onClose={onClose}>
+    <Modal title="欢迎来到超级码力" onClose={onClose}>
       <form
         className="form"
         onSubmit={async (e) => {

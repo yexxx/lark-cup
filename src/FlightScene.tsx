@@ -1,14 +1,6 @@
-import { useEffect, useMemo, useRef, useState } from "react";
-import { demoSvg, demoDesigns } from "../server/demo-art";
+import { useEffect, useRef, useState } from "react";
 import { Pause, Play, Volume2, VolumeX } from "lucide-react";
 export function FlightScene() {
-  const vectorBird = useMemo(() => {
-    const document = new DOMParser().parseFromString(
-      demoSvg(demoDesigns[0], true),
-      "image/svg+xml",
-    );
-    return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="120 55 345 260">${document.getElementById("lark")!.outerHTML}</svg>`;
-  }, []);
   const root = useRef<HTMLDivElement>(null);
   const audio = useRef<AudioContext | null>(null);
   const [paused, setPaused] = useState(
@@ -18,12 +10,11 @@ export function FlightScene() {
   const [sound, setSound] = useState(false);
   const [chirps, setChirps] = useState(0);
   useEffect(() => {
-    const svg = root.current?.querySelector("svg") as SVGSVGElement | null;
-    if (svg && "pauseAnimations" in svg) {
-      if (paused || !visible) svg.pauseAnimations();
-      else svg.unpauseAnimations();
-    }
-  }, [paused, visible]);
+    const media = window.matchMedia("(prefers-reduced-motion: reduce)");
+    const update = () => setPaused(media.matches);
+    media.addEventListener("change", update);
+    return () => media.removeEventListener("change", update);
+  }, []);
   useEffect(() => {
     const el = root.current!;
     let intersecting = true;
@@ -95,10 +86,10 @@ export function FlightScene() {
   return (
     <div
       ref={root}
-      className={`scene flight-scene ${paused || !visible ? "motion-paused" : ""}`}
+      className={`flight-scene ${paused || !visible ? "motion-paused" : ""}`}
       aria-label="边飞边唱的百灵鸟"
     >
-      <span className="scene-corner">在风里，自由鸣唱</span>
+      <span className="scene-corner">CREATIVITY LEVEL / 1024</span>
       <div className="flight-orbit">
         <button
           className="flying-lark"
@@ -109,27 +100,18 @@ export function FlightScene() {
             if (!sound) void toggleSound();
           }}
         >
-          <span
-            className="vector-lark"
-            dangerouslySetInnerHTML={{ __html: vectorBird }}
+          <img
+            className="pixel-lark"
+            src="/pixel-lark.png"
+            alt="像素百灵鸟展开翅膀飞向城堡"
           />
-          <span className="sing-note n1" aria-hidden="true">
-            ♪
-          </span>
-          <span className="sing-note n2" aria-hidden="true">
-            ♫
-          </span>
-          <span className="sing-note n3" aria-hidden="true">
-            ♩
-          </span>
         </button>
       </div>
-      <div className="scene-label">
-        <span>♪</span> 点击小鸟，听一段鸣唱
-      </div>
+      <div className="scene-label">点击百灵鸟，听一段鸣唱</div>
       <div className="scene-controls">
         <button
           onClick={() => setPaused((v) => !v)}
+          aria-pressed={paused}
           aria-label={paused ? "播放飞行动画" : "暂停飞行动画"}
           title={paused ? "继续飞行" : "暂停飞行"}
         >
@@ -137,6 +119,7 @@ export function FlightScene() {
         </button>
         <button
           onClick={() => void toggleSound()}
+          aria-pressed={sound}
           aria-label={sound ? "关闭鸟鸣" : "开启鸟鸣"}
           title={sound ? "关闭鸟鸣" : "开启鸟鸣"}
         >

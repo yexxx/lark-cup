@@ -7,7 +7,8 @@ import {
   Search,
   Trophy,
   Plus,
-  Leaf,
+  Code2,
+  Medal,
   RefreshCw,
   X,
   Clock3,
@@ -91,88 +92,90 @@ export function Gallery({
     return () => clearInterval(t);
   }, [ranking]);
   return (
-    <main className="container nature-gallery" id="gallery">
-      <aside className="discovery-sidebar">
-        <span className="sidebar-kicker">
-          <Leaf size={16} /> 灵感栖息地
-        </span>
-        <nav className="discovery-nav" aria-label="作品浏览方式">
-          <a className={!ranking ? "selected" : ""} href="#/gallery">
-            <Compass size={18} />
-            发现作品<span>{stats?.works ?? "…"}</span>
-          </a>
-          <a className={ranking ? "selected" : ""} href="#/ranking">
-            <Trophy size={18} />
-            人气榜单
-          </a>
-        </nav>
-        {!ranking && (
-          <div className="sort-options">
-            <span>看看哪一种灵感</span>
-            {[
-              ["recommended", "编辑精选", Sparkles],
-              ["latest", "最近飞来的", Clock3],
-              ["votes", "大家喜欢的", Heart],
-            ].map(([id, label, Icon]) => {
-              const I = Icon as typeof Heart;
-              return (
-                <button
-                  key={id as string}
-                  className={sort === id ? "selected" : ""}
-                  onClick={() => {
-                    setSort(id as string);
-                    setPage(1);
-                  }}
-                >
-                  <I size={15} />
-                  {label as string}
-                </button>
-              );
-            })}
-          </div>
-        )}
-        <div className="vote-pocket">
-          <span>
-            <Heart size={16} /> 今天的心意
+    <main className="container arcade-gallery" id="gallery">
+      <div className="discovery-sidebar-boundary">
+        <aside className="discovery-sidebar">
+          <span className="sidebar-kicker">
+            <Code2 size={16} /> 码力探索站
           </span>
-          <strong>
-            {quota
-              ? Math.max(0, quota.limit - quota.classic)
-              : competition.effectiveDailyLimit}
-            <small>
-              {" "}
-              / {quota?.limit || competition.effectiveDailyLimit} 票
-            </small>
-          </strong>
-          <p>
-            送给让你心动的作品
-            <br />
-            每天零点，心意重新装满
-          </p>
-          {!user && (
-            <button onClick={login}>
-              登录后投票 <ArrowUpRight size={14} />
-            </button>
+          <nav className="discovery-nav" aria-label="作品浏览方式">
+            <a className={!ranking ? "selected" : ""} href="#/gallery">
+              <Compass size={18} />
+              发现作品<span>{stats?.works ?? "…"}</span>
+            </a>
+            <a className={ranking ? "selected" : ""} href="#/ranking">
+              <Trophy size={18} />
+              人气榜单
+            </a>
+          </nav>
+          {!ranking && (
+            <div className="sort-options">
+              <span>发现你的灵感</span>
+              {[
+                ["recommended", "编辑精选", Sparkles],
+                ["latest", "最新作品", Clock3],
+                ["votes", "人气作品", Heart],
+              ].map(([id, label, Icon]) => {
+                const I = Icon as typeof Heart;
+                return (
+                  <button
+                    key={id as string}
+                    className={sort === id ? "selected" : ""}
+                    onClick={() => {
+                      setSort(id as string);
+                      setPage(1);
+                    }}
+                  >
+                    <I size={15} />
+                    {label as string}
+                  </button>
+                );
+              })}
+            </div>
           )}
-        </div>
-        <button className="sidebar-rules" onClick={rules}>
-          了解比赛规则 <ArrowUpRight size={14} />
-        </button>
-      </aside>
+          <div className="vote-pocket">
+            <span>
+              <Heart size={16} /> 今日剩余票数
+            </span>
+            <strong>
+              {quota
+                ? Math.max(0, quota.limit - quota.classic)
+                : competition.effectiveDailyLimit}
+              <small>
+                {" "}
+                / {quota?.limit || competition.effectiveDailyLimit} 票
+              </small>
+            </strong>
+            <p>
+              送给让你心动的作品
+              <br />
+              北京时间零点重置
+            </p>
+            {!user && (
+              <button onClick={login}>
+                登录后投票 <ArrowUpRight size={14} />
+              </button>
+            )}
+          </div>
+          <button className="sidebar-rules" onClick={rules}>
+            查看活动规则 <ArrowUpRight size={14} />
+          </button>
+        </aside>
+      </div>
       <section className="discovery-main">
         <div className="discovery-toolbar">
           <div>
-            <h2>{ranking ? "被喜爱的声音" : "发现新的鸣唱"}</h2>
+            <h2>{ranking ? "码力人气榜" : "发现超级创意"}</h2>
             <p>
               {ranking
-                ? "每一份心意，都让好作品被看见。"
+                ? "每一票，让超级创意被看见。"
                 : stats
-                  ? `${stats.works} 份作品，${stats.votes} 次共鸣。慢慢逛，总会遇见喜欢的。`
-                  : "慢慢逛，总会遇见喜欢的。"}
+                  ? `${stats.works} 份作品，${stats.votes} 票支持。一起发现创意的无限可能。`
+                  : "用同一道题目，打开不同的创意世界。"}
             </p>
           </div>
           {!ranking && (
-            <label className="nature-search">
+            <label className="arcade-search">
               <Search size={18} />
               <input
                 aria-label="搜索作品名称或编号"
@@ -213,9 +216,7 @@ export function Gallery({
         ) : !data.items.length ? (
           <div className="state empty">
             <Bird size={42} />
-            <h3>
-              {search ? "这片森林里还没找到它" : "第一声鸣唱，等你来开启"}
-            </h3>
+            <h3>{search ? "暂时没有找到匹配作品" : "你的创意，等你来点亮"}</h3>
             <p>换个词找找，或带着你的百灵鸟来参赛。</p>
             <a className="button primary" href="#/submit">
               提交作品 <Plus size={16} />
@@ -223,7 +224,7 @@ export function Gallery({
           </div>
         ) : (
           <>
-            <div className={ranking ? "ranking-list" : "nature-work-grid"}>
+            <div className={ranking ? "ranking-list" : "arcade-work-grid"}>
               {data.items.map((w) => (
                 <Card
                   key={w.id}
@@ -237,17 +238,18 @@ export function Gallery({
             <Pagination page={page} pages={data.pages} onChange={setPage} />
           </>
         )}
-        <p className="nature-gallery-note">
-          <Leaf size={13} /> 静静欣赏，自由选择。评选期间，作者保持匿名。
+        <p className="arcade-gallery-note">
+          <Code2 size={13} />{" "}
+          欣赏创意，为喜欢的作品投票。评选期间，作者保持匿名。
         </p>
       </section>
-      <section className="nature-invitation">
+      <section className="arcade-invitation">
         <div>
-          <span>每一份想象，都值得生根发芽</span>
-          <h2>这片森林，还缺少你的声音。</h2>
+          <span>1024 程序员节 · 内源社区活动</span>
+          <h2>下一份超级创意，由你创造。</h2>
         </div>
         <a className="button primary" href="#/submit">
-          带着灵感来参赛 <ArrowUpRight size={17} />
+          开始创作 <ArrowUpRight size={17} />
         </a>
       </section>
     </main>
@@ -268,9 +270,13 @@ function Card({
   const [added, setAdded] = useState(false);
   useEffect(() => setAdded(false), [w.votes]);
   return (
-    <article className={ranking ? "rank-card" : "nature-card"}>
+    <article className={ranking ? "rank-card" : "arcade-card"}>
       {ranking && (
-        <span className={`rank-number ${w.rank! <= 3 ? "top" : ""}`}>
+        <span
+          className={`rank-number ${w.rank! <= 3 ? `top place-${w.rank}` : ""}`}
+          aria-label={`第 ${w.rank} 名`}
+        >
+          {w.rank! <= 3 && <Medal size={26} aria-hidden="true" />}
           {String(w.rank).padStart(2, "0")}
         </span>
       )}
@@ -283,26 +289,26 @@ function Card({
           </div>
         )}
         {w.recommended && (
-          <span className="nature-picked">
-            <Leaf size={11} />
+          <span className="arcade-picked">
+            <Code2 size={11} />
             精选
           </span>
         )}
         <span className="cover-hover">
-          听听它的故事 <ArrowUpRight size={20} />
+          打开作品 <ArrowUpRight size={20} />
         </span>
       </a>
-      <div className="nature-card-body">
-        <span className="nature-card-number">
-          灵感 No.{String(w.number).padStart(3, "0")}
+      <div className="arcade-card-body">
+        <span className="arcade-card-number">
+          作品 No.{String(w.number).padStart(3, "0")}
         </span>
         <a className="work-title" href={`#/work/${w.id}`}>
           {w.title}
         </a>
-        <div className="nature-card-meta">
+        <div className="arcade-card-meta">
           <span>{w.model}</span>
           <button
-            className={`nature-vote ${voted || added ? "voted" : ""}`}
+            className={`arcade-vote ${voted || added ? "voted" : ""}`}
             disabled={busy || voted || added}
             aria-label={`为${w.title}投票，当前${w.votes + (added ? 1 : 0)}票`}
             onClick={async () => {

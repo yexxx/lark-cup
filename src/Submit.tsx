@@ -130,8 +130,8 @@ export function SubmitPage({
         ← 返回作品展区
       </a>
       <div className="page-heading">
-        <span className="eyebrow">带着灵感，加入这片森林</span>
-        <h1>{id ? "打磨你的灵感" : "让你的百灵鸟，飞进展区。"}</h1>
+        <span className="eyebrow">1024 · 开启你的创作挑战</span>
+        <h1>{id ? "打磨你的灵感" : "让你的超级创意，正式登场。"}</h1>
         <p className="muted">从一行提示词开始，让世界听见你的创意。</p>
       </div>
       {!user ? (
@@ -150,6 +150,15 @@ export function SubmitPage({
             <fieldset disabled={busy}>
               <div className="form-step">
                 <span>01</span>
+                <h2>领取创作题目</h2>
+              </div>
+              <label>
+                统一提示词
+                <textarea readOnly rows={3} value={competition.prompt} />
+                <small>所有作品使用同一提示词，以 HTML + SVG 完成创作。</small>
+              </label>
+              <div className="form-step">
+                <span>02</span>
                 <h2>作品信息</h2>
               </div>
               <label>
@@ -183,13 +192,8 @@ export function SubmitPage({
                   onChange={(e) => field("model", e.target.value)}
                 />
               </label>
-              <label>
-                统一提示词
-                <textarea readOnly rows={6} value={competition.prompt} />
-                <small>所有作品使用同一提示词，无需修改。</small>
-              </label>
               <div className="form-step">
-                <span>02</span>
+                <span>03</span>
                 <h2>上传作品</h2>
               </div>
               <div className="upload-grid">
@@ -263,7 +267,7 @@ export function SubmitPage({
             </fieldset>
           </form>
           <aside className="submit-guide">
-            <span className="eyebrow">A NOTE TO CREATORS</span>
+            <span className="eyebrow">CREATOR GUIDE / 创作指南</span>
             <h2>
               好作品，
               <br />
@@ -357,9 +361,9 @@ export function MyWorks({
     <main className="container my-page">
       <div className="detail-heading">
         <div>
-          <span className="eyebrow">MY LITTLE UNIVERSE</span>
+          <span className="eyebrow">MY CREATIONS / 我的创作记录</span>
           <h1>我的作品</h1>
-          <p className="muted">每一份灵感，都有自己的生长轨迹。</p>
+          <p className="muted">从草稿到公开展示，记录你的每一步创作。</p>
         </div>
         <a href="#/submit" className="button primary">
           新建作品 <Plus size={17} />

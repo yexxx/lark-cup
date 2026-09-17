@@ -17,7 +17,7 @@ import { type Competition, type Work, statusNames } from "./types";
 import { ErrorBox, Loading, Modal, Pagination } from "./ui";
 const sections = [
   ["works", "作品审核", CheckCheck],
-  ["settings", "赛事设置", Settings2],
+  ["settings", "活动设置", Settings2],
   ["users", "用户管理", Users],
   ["votes", "投票记录", Heart],
   ["audit", "操作日志", History],
@@ -92,8 +92,8 @@ export function Admin({
     <main className="container admin-page">
       <div className="detail-heading">
         <div>
-          <span className="eyebrow">LARK JAM / CONTROL ROOM</span>
-          <h1>赛事管理</h1>
+          <span className="eyebrow">SUPER CODE / 活动管理</span>
+          <h1>活动管理</h1>
         </div>
         <a href="#/gallery" className="text-button">
           查看前台 <ArrowUpRight size={16} />
@@ -519,7 +519,7 @@ function Settings({
         try {
           await send("/admin/competition", form, "PUT");
           await refresh();
-          notify("赛事设置已保存，投票额度次日生效。");
+          notify("活动设置已保存，投票额度次日生效。");
         } catch (err) {
           setError((err as Error).message);
         } finally {
@@ -527,13 +527,13 @@ function Settings({
         }
       }}
     >
-      <h2>赛事设置</h2>
+      <h2>活动设置</h2>
       {[
-        ["title", "赛事名称"],
-        ["tagline", "展区标题"],
-        ["description", "赛事简介"],
+        ["title", "活动名称"],
+        ["tagline", "活动口号"],
+        ["description", "活动简介"],
         ["prompt", "统一提示词"],
-        ["rules", "赛事规则"],
+        ["rules", "活动规则"],
         ["prizes", "奖项设置"],
       ].map(([id, label]) => (
         <label key={id}>
@@ -594,7 +594,7 @@ function Settings({
       </label>
       {error && <ErrorBox message={error} />}
       <button className="button primary" disabled={busy}>
-        {busy ? "保存中…" : "保存赛事设置"}
+        {busy ? "保存中…" : "保存活动设置"}
       </button>
     </form>
   );
