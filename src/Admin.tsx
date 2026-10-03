@@ -104,7 +104,7 @@ export function Admin({
           <LayoutDashboard size={40} />
           <h3>使用管理员身份进入管理后台</h3>
           <button className="button primary" onClick={login}>
-            切换登录身份
+            登录管理员账号
           </button>
         </div>
       ) : (
@@ -307,7 +307,7 @@ export function Admin({
                             <thead>
                               <tr>
                                 {(tab === "users"
-                                  ? ["身份", "名称", "角色", "状态", "操作"]
+                                  ? ["用户名", "名称", "角色", "状态", "操作"]
                                   : tab === "votes"
                                     ? [
                                         "作品",
@@ -327,7 +327,9 @@ export function Admin({
                                 <tr key={row.id}>
                                   {tab === "users" ? (
                                     <>
-                                      <td>{row.id}</td>
+                                      <td title={row.id}>
+                                        {row.username || row.id}
+                                      </td>
                                       <td>{row.name}</td>
                                       <td>
                                         {row.role === "admin"

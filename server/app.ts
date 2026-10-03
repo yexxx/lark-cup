@@ -11,7 +11,12 @@ import { validateHtml } from "./html.js";
 import type { DB } from "./db.js";
 import { Cache } from "./cache.js";
 import { config } from "./config.js";
-import { demoAuth, requireUser, type AuthAdapter } from "./auth.js";
+import {
+  localAuth,
+  cleanupSessions,
+  requireUser,
+  type AuthAdapter,
+} from "./auth.js";
 import {
   audit,
   castVote,
@@ -66,7 +71,18 @@ export async function buildApp(
   } = {},
 ) {
   const app = Fastify({
-    logger: options.logger ?? false,
+    logger: options.logger
+      ? {
+          redact: [
+            "req.headers.cookie",
+            "req.headers.authorization",
+            "req.body.password",
+            "req.body.currentPassword",
+            "req.body.newPassword",
+            "res.headers.set-cookie",
+          ],
+        }
+      : false,
     trustProxy: config.trustProxy,
     bodyLimit: 128 * 1024,
     requestTimeout: config.requestTimeout,
@@ -80,12 +96,19 @@ export async function buildApp(
     connectionTimeout: config.requestTimeout,
   });
   const cache = options.cache || new Cache();
-  const auth = options.auth || demoAuth(db);
   const uploads = options.uploads || config.uploads;
   const clock = options.now || (() => new Date());
+  const auth = options.auth || localAuth(db, cache, clock);
   const previewSecret = process.env.PREVIEW_SECRET || randomUUID();
   await mkdir(uploads, { recursive: true });
   await cache.ready();
+  const sessionCleanup = setInterval(() => {
+    void cleanupSessions(db, clock()).catch((error) =>
+      app.log.error(error, "Session cleanup failed"),
+    );
+  }, 3600000);
+  sessionCleanup.unref();
+  app.addHook("onClose", async () => clearInterval(sessionCleanup));
   await app.register(multipart, {
     limits: { fileSize: 5 * 1024 * 1024, files: 1, fields: 0, parts: 1 },
   });
@@ -112,7 +135,6 @@ export async function buildApp(
     req.raw.once("aborted", () => release(req));
     if (
       ["POST", "PATCH", "PUT", "DELETE"].includes(req.method) &&
-      req.headers.origin &&
       req.headers.origin !== config.appOrigin
     )
       fail(403, "请求来源不允许");
@@ -126,21 +148,20 @@ export async function buildApp(
   app.addHook("onTimeout", async (req) => release(req));
   const errors = (error: any, req: any, reply: any) => {
     if (error instanceof ZodError)
-      return reply
-        .code(400)
-        .send({
-          message: error.issues
-            .map((i: any) => `${i.path.join(".")}: ${i.message}`)
-            .join("；"),
-        });
-    const status = error.statusCode || (error.code === "23505" ? 409 : 500);
-    if (status >= 500) req.log.error(error);
-    reply
-      .code(status)
-      .send({
-        message: status >= 500 ? "服务暂时不可用，请稍后再试" : error.message,
-        requestId: req.id,
+      return reply.code(400).send({
+        message: error.issues
+          .map((i: any) => `${i.path.join(".")}: ${i.message}`)
+          .join("；"),
       });
+    const status = error.statusCode || (error.code === "23505" ? 409 : 500);
+    if (status === 429 || status === 503)
+      reply.header("Retry-After", status === 429 ? "60" : "2");
+    if (status >= 500) req.log.error(error);
+    reply.code(status).send({
+      message: status >= 500 ? "服务暂时不可用，请稍后再试" : error.message,
+      ...(error.authCode ? { code: error.authCode } : {}),
+      requestId: req.id,
+    });
   };
   app.setErrorHandler(errors);
   preview.setErrorHandler(errors);
@@ -186,8 +207,16 @@ export async function buildApp(
   app.post("/api/v1/auth/login", async (req, reply) => ({
     user: await auth.login(req, reply),
   }));
-  app.post("/api/v1/auth/logout", async (_req, reply) => {
-    auth.logout(reply);
+  app.post("/api/v1/auth/register", async (req, reply) => ({
+    user: await auth.register(req, reply),
+  }));
+  app.post("/api/v1/auth/logout", async (req, reply) => {
+    if (req.headers["x-lark-user"]) await requireUser(auth, req);
+    await auth.logout(req, reply);
+    return { ok: true };
+  });
+  app.post("/api/v1/auth/password", async (req, reply) => {
+    await auth.changePassword(req, reply);
     return { ok: true };
   });
   app.get("/api/v1/competition", async () => {
@@ -726,7 +755,7 @@ export async function buildApp(
     return {
       items: (
         await db.query(
-          "SELECT id,name,role,status,created_at FROM users ORDER BY created_at DESC LIMIT $1 OFFSET $2",
+          "SELECT u.id,u.name,u.role,u.status,u.created_at,i.subject AS username FROM users u LEFT JOIN auth_identities i ON i.user_id=u.id AND i.provider='local' ORDER BY u.created_at DESC LIMIT $1 OFFSET $2",
           [p.size, (p.page - 1) * p.size],
         )
       ).rows,
@@ -750,6 +779,8 @@ export async function buildApp(
         [id, b.status],
       );
       if (!r.rows.length) fail(404, "用户不存在");
+      if (b.status === "disabled")
+        await tx.query("DELETE FROM auth_sessions WHERE user_id=$1", [id]);
       await audit(tx, actor.id, "user.status", id, b);
       return { ok: true };
     });

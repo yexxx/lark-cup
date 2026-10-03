@@ -1,8 +1,12 @@
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import type { DB } from "./db.js";
-export function fail(statusCode: number, message: string): never {
-  throw Object.assign(new Error(message), { statusCode });
+export function fail(
+  statusCode: number,
+  message: string,
+  authCode?: "AUTH_CHANGED" | "AUTH_EXPIRED",
+): never {
+  throw Object.assign(new Error(message), { statusCode, authCode });
 }
 export const dayInBeijing = (date = new Date()) =>
   new Date(date.getTime() + 8 * 3600000).toISOString().slice(0, 10);
@@ -128,4 +132,3 @@ export async function castVote(
     return { id, repeated: false };
   });
 }
-

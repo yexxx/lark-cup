@@ -45,8 +45,9 @@ export async function openDB(options: { memory?: boolean } = {}): Promise<DB> {
   }
   if (process.env.NODE_ENV === "production" && !options.memory)
     throw new Error("DATABASE_URL is required in production");
-  if (!options.memory) await mkdir(".local", { recursive: true });
-  const pg = new PGlite(options.memory ? undefined : ".local/postgres");
+  if (!options.memory)
+    await mkdir(config.localDatabaseDir, { recursive: true });
+  const pg = new PGlite(options.memory ? undefined : config.localDatabaseDir);
   await pg.waitReady;
   const wrap = (client: any): DB => ({
     query: async (sql, args) => {

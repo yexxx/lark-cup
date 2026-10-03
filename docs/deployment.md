@@ -25,6 +25,43 @@ docker compose exec api npm run seed
 
 这会创建／更新演示作者的 8 份作品及演示观众投票，不适合已有正式比赛的数据库。已有演示作品重复执行会更新源码与封面，保留票数。
 
+## 账号管理与新比赛
+
+服务启动时自动执行账号、身份映射和会话表迁移。参赛者从页面自助注册；管理员在 API 容器的交互终端中创建：
+
+```sh
+docker compose exec api npm run auth:create-admin
+docker compose exec api npm run auth:reset-password
+```
+
+命令依次询问用户名、显示姓名（创建管理员时）和两次密码。密码输入隐藏，长度为 15～128 个字符。密码重置会立即撤销该账号全部会话。请通过核实身份的管理员流程处理密码重置请求。
+
+本地 PGlite 管理命令为 `npm run auth:create-admin` / `npm run auth:reset-password`；先停止开发服务，以便命令独占本地数据库目录。新建本地比赛可设置 `LOCAL_DATABASE_DIR=.local/新比赛/postgres` 与 `UPLOAD_DIR=.local/新比赛/uploads`，运行服务和管理命令时保持相同配置。生产 PostgreSQL 支持在运行中的 API 容器执行管理命令。TLS 部署命令同时带上两个 `-f` 参数。
+
+新比赛使用独立空数据库与上传目录。可按下面的方式创建独立 Compose 项目及全新的 named volumes：
+
+```sh
+docker compose -p super-code-event config --quiet
+docker compose -p super-code-event up -d --build
+docker compose -p super-code-event exec api npm run auth:create-admin
+```
+
+后续操作保持相同项目名称。切换服务前对旧项目数据库与上传文件做成对备份，停止旧网站占用的 HTTP 端口，再启动新项目。认证迁移保留旧用户、作品及票数；旧数据留存于原项目 volumes。
+
+`.env` 可设置下列认证参数：
+
+| 参数                          | 默认值 | 行为                 |
+| ----------------------------- | -----: | -------------------- |
+| AUTH_SESSION_SECONDS          | 604800 | 会话最长存活秒数     |
+| AUTH_IDLE_SECONDS             |  86400 | 连续闲置过期秒数     |
+| AUTH_LOGIN_IP_PER_MINUTE      |     60 | 单 IP 每分钟登录次数 |
+| AUTH_LOGIN_ACCOUNT_PER_MINUTE |     10 | 单账号每分钟登录次数 |
+| AUTH_REGISTER_IP_PER_MINUTE   |     10 | 单 IP 每分钟注册次数 |
+
+密码使用 Node.js 异步 scrypt（N=131072，r=8，p=1），最多两项同时执行，超额返回 503。会话存储在 PostgreSQL，每小时清理过期记录；Redis承担业务缓存和认证限流。修改 `.env` 后重建 API 服务。
+
+部署验收时使用两个独立浏览器登录不同账号，核对 `/api/v1/auth/me`、作品归属及每日额度，退出其中一个后验证另一个仍可访问。再检查同账号多设备登录、修改密码后的全部会话失效、管理员停用与重新启用。`APP_ORIGIN` 必须与浏览器发送的 Origin 完全一致，HTTPS Cookie 的 Secure 属性取决于该配置；反向代理应保留请求 Cookie、Origin、Set-Cookie，个人接口保持 no-store。
+
 ## HTTPS 与预览域名
 
 提供 `deploy/nginx.tls.conf` 和 `deploy/compose.tls.yaml`。建议主站和作品预览使用不同注册域，例如 `cup.example.com` 与 `preview.example.net`，不要给共享父域设置认证 Cookie。主站永远不输出选手上传的 HTML。
@@ -45,23 +82,23 @@ TLS 模式只发布 80/443，80 重定向到 HTTPS，主站与预览由域名分
 
 ## 资源上限
 
-| 项目 | 默认 |
-|---|---|
-| 前端 API 请求并发 | 4 |
-| 前端上传 | 顺序执行 |
-| API + 预览在途请求 | 32；超额 503，不无限排队 |
-| 上传在途请求 | 2；超额 503 |
-| PostgreSQL 应用连接池 | 10 |
-| PostgreSQL 最大连接 | 40 |
-| Redis 最大数据内存 | 192MB |
-| API 容器 | 1.5 CPU / 1536MB |
-| PostgreSQL 容器 | 1.25 CPU / 1536MB |
-| Redis 容器 | 0.5 CPU / 384MB |
-| Nginx 容器 | 0.5 CPU / 192MB |
-| IP API 限流 | 240 次／分钟，Nginx 另有限流 |
-| 用户投票／上传限流 | 20／10 次／分钟 |
-| 列表／榜单缓存 | 10／15 秒，单实例合并同键重建 |
-| 日志 | 每容器 3 × 10MB |
+| 项目                  | 默认                          |
+| --------------------- | ----------------------------- |
+| 前端 API 请求并发     | 4                             |
+| 前端上传              | 顺序执行                      |
+| API + 预览在途请求    | 32；超额 503，不无限排队      |
+| 上传在途请求          | 2；超额 503                   |
+| PostgreSQL 应用连接池 | 10                            |
+| PostgreSQL 最大连接   | 40                            |
+| Redis 最大数据内存    | 192MB                         |
+| API 容器              | 1.5 CPU / 1536MB              |
+| PostgreSQL 容器       | 1.25 CPU / 1536MB             |
+| Redis 容器            | 0.5 CPU / 384MB               |
+| Nginx 容器            | 0.5 CPU / 192MB               |
+| IP API 限流           | 240 次／分钟，Nginx 另有限流  |
+| 用户投票／上传限流    | 20／10 次／分钟               |
+| 列表／榜单缓存        | 10／15 秒，单实例合并同键重建 |
+| 日志                  | 每容器 3 × 10MB               |
 
 修改 `.env` 的 `MAX_INFLIGHT`、`MAX_UPLOADS`、`DB_POOL_MAX`、`IP_RATE_PER_MINUTE` 等参数后重建服务。默认只部署 **一个 API 实例**；不要直接把副本数量加倍而不调整数据库总连接预算、共享文件存储及全局并发预算。
 

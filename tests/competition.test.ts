@@ -9,6 +9,7 @@ import { openDB, type DB } from "../server/db.js";
 import { migrate } from "../server/migrate.js";
 import { buildApp } from "../server/app.js";
 import { Cache } from "../server/cache.js";
+import { config } from "../server/config.js";
 import {
   castVote,
   dayInBeijing,
@@ -17,10 +18,15 @@ import {
 } from "../server/domain.js";
 let db: DB, servers: Awaited<ReturnType<typeof buildApp>>, folder: string;
 let now = new Date("2026-09-16T10:00:00+08:00");
-const owner = "test-author";
-const admin = "admin";
+let owner: string, admin: string;
+const userIds = new Map<string, string>();
+const cookies = new Map<string, string>();
+const uid = (username: string) => userIds.get(username)!;
 let coverId: string, htmlId: string, workId: string;
-const cookie = (id: string) => ({ cookie: `lark_demo=${id}` });
+const cookie = (id: string) => ({
+  cookie: cookies.get(id)!,
+  origin: config.appOrigin,
+});
 const base = {
   title: "测试：飞行中的百灵鸟",
   description: "点击鸣唱，飞行中振翅。",
@@ -30,15 +36,31 @@ const base = {
   coverId: null as string | null,
   htmlId: null as string | null,
 };
-async function login(id: string) {
+async function login(username: string) {
   const r = await servers.app.inject({
     method: "POST",
-    url: "/api/v1/auth/login",
-    payload: { id, name: id },
+    url: "/api/v1/auth/register",
+    headers: { origin: config.appOrigin },
+    payload: {
+      username,
+      name: username,
+      password: "test-password-with-24-chars",
+    },
   });
   assert.equal(r.statusCode, 200, r.body);
+  const id = r.json().user.id;
+  userIds.set(username, id);
+  const session = ([] as string[])
+    .concat(r.headers["set-cookie"] || [])
+    .find((s) => s.startsWith("lark_session="))!
+    .split(";")[0];
+  cookies.set(username, session);
+  cookies.set(id, session);
+  if (username === "admin")
+    await db.query("UPDATE users SET role='admin' WHERE id=$1", [id]);
   return r;
 }
+
 async function create(track = "classic", status = "approved") {
   const id = randomUUID();
   await db.query(
@@ -80,15 +102,15 @@ before(async () => {
     uploads: folder,
     now: () => now,
   });
-  await login(owner);
-  await login(admin);
+  owner = (await login("test-author")).json().user.id;
+  admin = (await login("admin")).json().user.id;
 });
 after(async () => {
   await servers?.close();
   await db?.close();
   if (folder) await rm(folder, { recursive: true, force: true });
 });
-test("migration is repeatable; auth adapter uses explicit demo identities", async () => {
+test("migration is repeatable; registered users have independent sessions", async () => {
   await migrate(db);
   const r = await servers.app.inject({
     url: "/api/v1/auth/me",
@@ -219,7 +241,7 @@ test("unauthorized users cannot edit or approve another work; foreign assets den
   const edit = await servers.app.inject({
     method: "PUT",
     url: `/api/v1/works/${workId}`,
-    headers: cookie("outsider"),
+    headers: cookie(uid("outsider")),
     payload: { ...base, coverId, htmlId, version: 1 },
   });
   assert.equal(edit.statusCode, 404);
@@ -233,7 +255,7 @@ test("unauthorized users cannot edit or approve another work; foreign assets den
   const foreign = await servers.app.inject({
     method: "POST",
     url: "/api/v1/works",
-    headers: cookie("outsider"),
+    headers: cookie(uid("outsider")),
     payload: { ...base, coverId, htmlId },
   });
   assert.equal(foreign.statusCode, 400);
@@ -243,24 +265,27 @@ test("idempotency and simultaneous votes charge quota once", async () => {
   const key = randomUUID();
   const results = await Promise.all(
     Array.from({ length: 10 }, () =>
-      castVote(db, "concurrent", workId, key, now),
+      castVote(db, uid("concurrent"), workId, key, now),
     ),
   );
   assert.equal(new Set(results.map((r) => r.id)).size, 1);
   assert.equal(
     (
       await db.query("SELECT used FROM daily_quotas WHERE user_id=$1", [
-        "concurrent",
+        uid("concurrent"),
       ])
     ).rows[0].used,
     1,
   );
   await assert.rejects(
-    castVote(db, "concurrent", workId, randomUUID(), now),
+    castVote(db, uid("concurrent"), workId, randomUUID(), now),
     /今天已/,
   );
   const other = await create();
-  await assert.rejects(castVote(db, "concurrent", other, key, now), /幂等键/);
+  await assert.rejects(
+    castVote(db, uid("concurrent"), other, key, now),
+    /幂等键/,
+  );
 });
 test("single daily quota stops concurrent overrun", async () => {
   await login("quota-user");
@@ -271,26 +296,29 @@ test("single daily quota stops concurrent overrun", async () => {
   const works = [];
   for (let i = 0; i < 5; i++) works.push(await create());
   const results = await Promise.allSettled(
-    works.map((id) => castVote(db, "quota-user", id, randomUUID(), now)),
+    works.map((id) => castVote(db, uid("quota-user"), id, randomUUID(), now)),
   );
   assert.equal(results.filter((r) => r.status === "fulfilled").length, 3);
   assert.equal(
     (
       await db.query(
         "SELECT used FROM daily_quotas WHERE user_id=$1 AND track='classic'",
-        ["quota-user"],
+        [uid("quota-user")],
       )
     ).rows[0].used,
     3,
   );
-  await assert.rejects(castVote(db, "quota-user", await create(), randomUUID(), now), /已用完/);
+  await assert.rejects(
+    castVote(db, uid("quota-user"), await create(), randomUUID(), now),
+    /已用完/,
+  );
 });
 test("Beijing midnight resets quota and per-work uniqueness", async () => {
   assert.equal(dayInBeijing(new Date("2026-09-16T15:59:59Z")), "2026-09-16");
   assert.equal(dayInBeijing(new Date("2026-09-16T16:00:00Z")), "2026-09-17");
   await castVote(
     db,
-    "concurrent",
+    uid("concurrent"),
     workId,
     randomUUID(),
     new Date("2026-09-16T16:00:00Z"),
@@ -298,7 +326,7 @@ test("Beijing midnight resets quota and per-work uniqueness", async () => {
   assert.equal(
     (
       await db.query("SELECT count(*) FROM votes WHERE user_id=$1", [
-        "concurrent",
+        uid("concurrent"),
       ])
     ).rows[0].count,
     2,
@@ -327,7 +355,7 @@ test("closed windows reject submissions and votes on server", async () => {
     }),
   ]);
   await assert.rejects(
-    castVote(db, "outsider", workId, randomUUID(), now),
+    castVote(db, uid("outsider"), workId, randomUUID(), now),
     /不在投票时间/,
   );
   const r = await servers.app.inject({
@@ -408,7 +436,7 @@ test("approved edit returns to draft; stale version fails; rejection/resubmit/wi
     200,
   );
   await assert.rejects(
-    castVote(db, "outsider", workId, randomUUID(), now),
+    castVote(db, uid("outsider"), workId, randomUUID(), now),
     /未公开|撤回/,
   );
 });
@@ -416,7 +444,7 @@ test("voiding votes is audited, reduces tally and does not refund quota", async 
   const v = (
     await db.query(
       "SELECT * FROM votes WHERE user_id=$1 ORDER BY created_at LIMIT 1",
-      ["concurrent"],
+      [uid("concurrent")],
     )
   ).rows[0];
   const r = await servers.app.inject({
@@ -434,7 +462,8 @@ test("voiding votes is audited, reduces tally and does not refund quota", async 
   assert.equal(
     (
       await db.query(
-        "SELECT used FROM daily_quotas WHERE user_id='concurrent' AND day='2026-09-16'",
+        "SELECT used FROM daily_quotas WHERE user_id=$1 AND day='2026-09-16'",
+        [uid("concurrent")],
       )
     ).rows[0].used,
     1,
@@ -448,7 +477,7 @@ test("voiding votes is audited, reduces tally and does not refund quota", async 
 test("disabled user cannot participate; self-disable prevented", async () => {
   const r = await servers.app.inject({
     method: "PATCH",
-    url: "/api/v1/admin/users/outsider",
+    url: `/api/v1/admin/users/${uid("outsider")}`,
     headers: cookie(admin),
     payload: { status: "disabled" },
   });
@@ -457,16 +486,16 @@ test("disabled user cannot participate; self-disable prevented", async () => {
     (
       await servers.app.inject({
         url: "/api/v1/me/quota",
-        headers: cookie("outsider"),
+        headers: cookie(uid("outsider")),
       })
     ).statusCode,
-    403,
+    401,
   );
   assert.equal(
     (
       await servers.app.inject({
         method: "PATCH",
-        url: "/api/v1/admin/users/admin",
+        url: `/api/v1/admin/users/${admin}`,
         headers: cookie(admin),
         payload: { status: "disabled" },
       })

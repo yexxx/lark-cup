@@ -58,8 +58,9 @@ export class Cache {
         ) <= limit
       );
     const k = `rate:${key}`;
-    const n = Number((await this.get(k)) || 0) + 1;
-    const previous = this.local.get(k);
+    const entry = this.local.get(k);
+    const previous = entry && entry.until > Date.now() ? entry : undefined;
+    const n = Number(previous?.value || 0) + 1;
     this.local.set(k, {
       value: String(n),
       until: previous?.until || Date.now() + seconds * 1000,

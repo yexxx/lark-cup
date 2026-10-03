@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import {
   Bird,
   ArrowUpRight,
@@ -20,9 +20,11 @@ import {
   RefreshCw,
   UserRound,
   Code2,
+  KeyRound,
 } from "lucide-react";
 import { api, send } from "./api";
 import { authAdapter, type User } from "./auth";
+import { sessionVersion, updateSession } from "./session";
 import type { Work, Competition, Quota } from "./types";
 import { Modal, Loading, ErrorBox, Pagination, formatDate } from "./ui";
 import { SubmitPage, MyWorks } from "./Submit";
@@ -39,16 +41,61 @@ export function App() {
   const [competition, setCompetition] = useState<Competition | null>(null);
   const [quota, setQuota] = useState<Quota | null>(null);
   const [authOpen, setAuthOpen] = useState(false);
+  const [passwordOpen, setPasswordOpen] = useState(false);
+  const [authRevision, setAuthRevision] = useState(0);
+  const currentUser = useRef<User | null>(null);
+  const refreshSequence = useRef(0);
+  const authChannel = useRef<BroadcastChannel | null>(null);
   const [info, setInfo] = useState<"rules" | "prizes" | "prompt" | null>(null);
   const [toast, setToast] = useState("");
   const [startupError, setStartupError] = useState("");
   const [mobile, setMobile] = useState(false);
   const notify = useCallback((text: string) => setToast(text), []);
-  const loadQuota = useCallback(async () => {
-    try {
-      setQuota(await api("/me/quota"));
-    } catch {
+  const applyUser = useCallback((u: User | null, force = false) => {
+    const changed = currentUser.current?.id !== u?.id;
+    currentUser.current = u;
+    updateSession(u?.id || null, force);
+    if (u) setAuthOpen(false);
+    if (changed || force) {
       setQuota(null);
+      setAuthRevision((n) => n + 1);
+      setPasswordOpen(false);
+    }
+    setUser(u);
+  }, []);
+  const refreshUser = useCallback(
+    async (force = false) => {
+      const sequence = ++refreshSequence.current;
+      const result = await authAdapter.currentUser();
+      if (sequence === refreshSequence.current) applyUser(result.user, force);
+    },
+    [applyUser],
+  );
+  const announceUser = useCallback(
+    (u: User | null) => {
+      refreshSequence.current++;
+      applyUser(u, true);
+      authChannel.current?.postMessage({ type: "changed" });
+    },
+    [applyUser],
+  );
+  const logout = async () => {
+    try {
+      await authAdapter.logout();
+      announceUser(null);
+      setMobile(false);
+      notify("已退出登录");
+    } catch (e) {
+      notify((e as Error).message);
+    }
+  };
+  const loadQuota = useCallback(async () => {
+    const version = sessionVersion();
+    try {
+      const next = await api<Quota>("/me/quota");
+      if (version === sessionVersion()) setQuota(next);
+    } catch {
+      if (version === sessionVersion()) setQuota(null);
     }
   }, []);
   const refreshCompetition = useCallback(
@@ -68,16 +115,59 @@ export function App() {
     (async () => {
       try {
         await refreshCompetition();
-        setUser((await authAdapter.currentUser()).user);
+        await refreshUser();
       } catch (e) {
         setStartupError((e as Error).message);
       }
     })();
-  }, [refreshCompetition]);
+  }, [refreshCompetition, refreshUser]);
+  useEffect(() => {
+    const sync = () => {
+      refreshSequence.current++;
+      applyUser(null, true);
+      void refreshUser(true).catch(() => {});
+    };
+    const focus = () => {
+      void refreshUser().catch(() => {});
+    };
+    const visible = () => {
+      if (document.visibilityState === "visible") focus();
+    };
+    const expired = () => {
+      refreshSequence.current++;
+      applyUser(null, true);
+      setAuthOpen(true);
+      notify("登录已过期，请重新登录");
+    };
+    const channel =
+      typeof BroadcastChannel === "undefined"
+        ? null
+        : new BroadcastChannel("lark-auth");
+    authChannel.current = channel;
+    if (channel)
+      channel.onmessage = (event) => {
+        if (event.data?.type === "changed") sync();
+      };
+    window.addEventListener("focus", focus);
+    window.addEventListener("pageshow", focus);
+    document.addEventListener("visibilitychange", visible);
+    window.addEventListener("lark:auth-expired", expired);
+    window.addEventListener("lark:auth-changed", sync);
+    return () => {
+      refreshSequence.current++;
+      channel?.close();
+      authChannel.current = null;
+      window.removeEventListener("focus", focus);
+      window.removeEventListener("pageshow", focus);
+      document.removeEventListener("visibilitychange", visible);
+      window.removeEventListener("lark:auth-expired", expired);
+      window.removeEventListener("lark:auth-changed", sync);
+    };
+  }, [applyUser, refreshUser, notify]);
   useEffect(() => {
     if (user) void loadQuota();
     else setQuota(null);
-  }, [user, loadQuota]);
+  }, [user, authRevision, loadQuota]);
   useEffect(() => {
     if (!toast) return;
     const id = setTimeout(() => setToast(""), 4500);
@@ -98,7 +188,7 @@ export function App() {
       notify("投票成功！为好创意加一码力。");
       return true;
     } catch (e) {
-      notify((e as Error).message);
+      if ((e as Error).name !== "AbortError") notify((e as Error).message);
       return false;
     }
   };
@@ -129,20 +219,15 @@ export function App() {
           <button onClick={() => setInfo("prizes")}>奖项设置</button>
           {mobile && user && (
             <button
-              onClick={async () => {
-                try {
-                  await authAdapter.logout();
-                  setUser(null);
-                  setMobile(false);
-                  notify("已退出登录");
-                } catch (e) {
-                  notify((e as Error).message);
-                }
+              onClick={() => {
+                setPasswordOpen(true);
+                setMobile(false);
               }}
             >
-              退出登录
+              修改密码
             </button>
           )}
+          {mobile && user && <button onClick={logout}>退出登录</button>}
         </nav>
         <div className="header-actions">
           {user ? (
@@ -157,13 +242,17 @@ export function App() {
               </button>
               <button
                 className="icon-button"
+                title="修改密码"
+                aria-label="修改密码"
+                onClick={() => setPasswordOpen(true)}
+              >
+                <KeyRound size={17} />
+              </button>
+              <button
+                className="icon-button"
                 title="退出登录"
                 aria-label="退出登录"
-                onClick={async () => {
-                  await authAdapter.logout();
-                  setUser(null);
-                  notify("已退出登录");
-                }}
+                onClick={logout}
               >
                 <LogOut size={17} />
               </button>
@@ -203,7 +292,7 @@ export function App() {
           )}
           {isHome || route === "/ranking" ? (
             <Gallery
-              key={route === "/ranking" ? "ranking" : "gallery"}
+              key={`${authRevision}:${route === "/ranking" ? "ranking" : "gallery"}`}
               ranking={route === "/ranking"}
               quota={quota}
               user={user}
@@ -214,7 +303,7 @@ export function App() {
             />
           ) : route.startsWith("/work/") ? (
             <WorkDetail
-              key={route}
+              key={`${authRevision}:${route}`}
               id={route.split("/")[2]}
               vote={vote}
               quota={quota}
@@ -222,7 +311,7 @@ export function App() {
             />
           ) : route.startsWith("/submit") ? (
             <SubmitPage
-              key={route}
+              key={`${authRevision}:${route}`}
               id={route.split("/")[2]}
               user={user}
               competition={competition}
@@ -231,12 +320,14 @@ export function App() {
             />
           ) : route === "/mine" ? (
             <MyWorks
+              key={authRevision}
               user={user}
               login={() => setAuthOpen(true)}
               notify={notify}
             />
           ) : route === "/admin" ? (
             <Admin
+              key={authRevision}
               user={user}
               login={() => setAuthOpen(true)}
               notify={notify}
@@ -270,9 +361,19 @@ export function App() {
         <Login
           onClose={() => setAuthOpen(false)}
           onLogin={(u) => {
-            setUser(u);
+            announceUser(u);
             setAuthOpen(false);
-            notify(`欢迎回来，${u.name}`);
+            notify(`欢迎，${u.name}`);
+          }}
+        />
+      )}
+      {passwordOpen && user && (
+        <ChangePassword
+          onClose={() => setPasswordOpen(false)}
+          onChanged={() => {
+            announceUser(null);
+            setAuthOpen(true);
+            notify("密码已修改，请重新登录");
           }}
         />
       )}
@@ -345,20 +446,36 @@ function Login({
   onClose: () => void;
   onLogin: (u: User) => void;
 }) {
-  const [id, setId] = useState("visitor");
-  const [name, setName] = useState("灵感访客");
+  const [register, setRegister] = useState(false);
+  const [username, setUsername] = useState("");
+  const [name, setName] = useState("");
+  const [password, setPassword] = useState("");
+  const [confirmation, setConfirmation] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   return (
-    <Modal title="欢迎来到超级码力" onClose={onClose}>
+    <Modal
+      title="欢迎来到超级码力"
+      onClose={() => {
+        if (!busy) onClose();
+      }}
+    >
       <form
         className="form"
         onSubmit={async (e) => {
           e.preventDefault();
-          setBusy(true);
+          if (busy) return;
           setError("");
+          if (register && password !== confirmation) {
+            setError("两次密码输入需要一致");
+            return;
+          }
+          setBusy(true);
           try {
-            onLogin((await authAdapter.login(id, name)).user);
+            const result = register
+              ? await authAdapter.register(username, name, password)
+              : await authAdapter.login(username, password);
+            onLogin(result.user);
           } catch (err) {
             setError((err as Error).message);
           } finally {
@@ -366,55 +483,186 @@ function Login({
           }
         }}
       >
-        <p className="muted">登录认证待接入，当前使用演示身份体验完整流程。</p>
         <div className="segmented">
           <button
             type="button"
-            className={id === "visitor" ? "selected" : ""}
+            disabled={busy}
+            className={!register ? "selected" : ""}
             onClick={() => {
-              setId("visitor");
-              setName("灵感访客");
+              setRegister(false);
+              setError("");
+              setPassword("");
+              setConfirmation("");
             }}
           >
-            参赛者
+            登录
           </button>
           <button
             type="button"
-            className={id === "admin" ? "selected" : ""}
+            disabled={busy}
+            className={register ? "selected" : ""}
             onClick={() => {
-              setId("admin");
-              setName("赛事管理员");
+              setRegister(true);
+              setError("");
+              setPassword("");
+              setConfirmation("");
             }}
           >
-            管理员
+            注册
           </button>
         </div>
         <label>
-          身份标识
+          用户名
           <input
+            name="username"
+            autoComplete="username"
+            autoCapitalize="none"
+            spellCheck={false}
             required
-            pattern="[a-zA-Z0-9_-]{1,48}"
-            value={id}
-            onChange={(e) => setId(e.target.value)}
-            maxLength={48}
+            pattern="[a-zA-Z0-9_-]{3,32}"
+            maxLength={32}
+            value={username}
+            disabled={busy}
+            onChange={(e) => setUsername(e.target.value)}
           />
           <small>
-            英文字母、数字、下划线或短横线，可填写不同标识体验多用户。
+            3～32 位英文字母、数字、下划线或短横线，大小写统一处理。
           </small>
         </label>
+        {register && (
+          <label>
+            显示姓名
+            <input
+              name="name"
+              autoComplete="nickname"
+              required
+              maxLength={40}
+              value={name}
+              disabled={busy}
+              onChange={(e) => setName(e.target.value)}
+            />
+          </label>
+        )}
         <label>
-          显示名称
+          密码
           <input
+            name="password"
+            type="password"
+            autoComplete={register ? "new-password" : "current-password"}
             required
-            value={name}
-            maxLength={40}
-            onChange={(e) => setName(e.target.value)}
+            value={password}
+            disabled={busy}
+            onChange={(e) => setPassword(e.target.value)}
+          />
+          <small>15～128 个字符，支持空格和中文。</small>
+        </label>
+        {register && (
+          <label>
+            确认密码
+            <input
+              name="confirmation"
+              type="password"
+              autoComplete="new-password"
+              required
+              value={confirmation}
+              disabled={busy}
+              onChange={(e) => setConfirmation(e.target.value)}
+            />
+          </label>
+        )}
+        {error && <ErrorBox message={error} />}
+        {!register && (
+          <p className="muted">忘记密码时，请联系赛事管理员重置。</p>
+        )}
+        <button disabled={busy} className="button primary">
+          {busy ? "正在处理…" : register ? "注册并进入比赛" : "登录并进入比赛"}
+          <ArrowRight size={18} />
+        </button>
+      </form>
+    </Modal>
+  );
+}
+function ChangePassword({
+  onClose,
+  onChanged,
+}: {
+  onClose: () => void;
+  onChanged: () => void;
+}) {
+  const [currentPassword, setCurrentPassword] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmation, setConfirmation] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  return (
+    <Modal
+      title="修改密码"
+      onClose={() => {
+        if (!busy) onClose();
+      }}
+    >
+      <form
+        className="form"
+        onSubmit={async (e) => {
+          e.preventDefault();
+          if (busy) return;
+          setError("");
+          if (newPassword !== confirmation) {
+            setError("两次密码输入需要一致");
+            return;
+          }
+          setBusy(true);
+          try {
+            await authAdapter.changePassword(currentPassword, newPassword);
+            onChanged();
+          } catch (err) {
+            setError((err as Error).message);
+          } finally {
+            setBusy(false);
+          }
+        }}
+      >
+        <p className="muted">修改后，所有设备需要使用新密码重新登录。</p>
+        <label>
+          当前密码
+          <input
+            type="password"
+            name="currentPassword"
+            autoComplete="current-password"
+            required
+            disabled={busy}
+            value={currentPassword}
+            onChange={(e) => setCurrentPassword(e.target.value)}
+          />
+        </label>
+        <label>
+          新密码
+          <input
+            type="password"
+            name="newPassword"
+            autoComplete="new-password"
+            required
+            disabled={busy}
+            value={newPassword}
+            onChange={(e) => setNewPassword(e.target.value)}
+          />
+          <small>15～128 个字符，支持空格和中文。</small>
+        </label>
+        <label>
+          确认新密码
+          <input
+            type="password"
+            name="confirmation"
+            autoComplete="new-password"
+            required
+            disabled={busy}
+            value={confirmation}
+            onChange={(e) => setConfirmation(e.target.value)}
           />
         </label>
         {error && <ErrorBox message={error} />}
-        <button disabled={busy} className="button primary">
-          {busy ? "正在进入…" : "进入比赛"}
-          <ArrowRight size={18} />
+        <button className="button primary" disabled={busy}>
+          {busy ? "正在修改…" : "修改密码"}
         </button>
       </form>
     </Modal>

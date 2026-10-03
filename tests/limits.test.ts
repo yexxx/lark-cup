@@ -8,6 +8,17 @@ import { migrate } from "../server/migrate.js";
 import { buildApp } from "../server/app.js";
 import { Cache } from "../server/cache.js";
 import { config } from "../server/config.js";
+test("parallel requests share the in-memory authentication rate budget", async () => {
+  const cache = new Cache(true);
+  try {
+    const results = await Promise.all(
+      Array.from({ length: 20 }, () => cache.take("auth-login", 2)),
+    );
+    assert.equal(results.filter(Boolean).length, 2);
+  } finally {
+    await cache.close();
+  }
+});
 test("inflight cap returns 503 without queuing and recovers after requests finish", async () => {
   const db = await openDB({ memory: true });
   await migrate(db);
