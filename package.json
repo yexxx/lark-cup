@@ -14,7 +14,18 @@
     "auth:create-admin": "tsx server/auth-cli.ts create-admin",
     "auth:reset-password": "tsx server/auth-cli.ts reset-password",
     "test": "tsx --test --test-concurrency=1 tests/*.test.ts",
-    "test:load": "tsx scripts/load.ts"
+    "test:load": "tsx scripts/load.ts",
+    "load:env": "tsx scripts/load/env.ts",
+    "load:suite": "tsx scripts/load/suite.ts",
+    "load:collect": "tsx scripts/load/collect.ts",
+    "load:checks": "tsx scripts/load/checks.ts",
+    "load:faults": "tsx scripts/load/faults.ts",
+    "load:cache-pressure": "tsx scripts/load/cache-pressure.ts",
+    "load:reconcile": "tsx scripts/load/reconcile.ts",
+    "load:burst": "tsx scripts/load/burst.ts",
+    "load:defaults": "tsx scripts/load/defaults.ts",
+    "load:tls": "tsx scripts/load/tls.ts",
+    "load:soak": "tsx scripts/load/soak.ts"
   },
   "dependencies": {
     "@electric-sql/pglite": "^0.3.14",

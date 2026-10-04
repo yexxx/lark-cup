@@ -1,0 +1,99 @@
+name: lark-cup-load
+x-logging: &load-logs
+  driver: json-file
+  options: { max-size: "10m", max-file: "3" }
+services:
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: lark
+      POSTGRES_DB: lark_load
+      POSTGRES_PASSWORD: ${LOAD_DB_PASSWORD:?}
+    command:
+      [
+        postgres,
+        -c,
+        max_connections=40,
+        -c,
+        shared_buffers=256MB,
+        -c,
+        work_mem=4MB,
+        -c,
+        statement_timeout=10000,
+      ]
+    ports: ["127.0.0.1:15432:5432"]
+    volumes: ["postgres:/var/lib/postgresql/data"]
+    mem_limit: 1536m
+    cpus: 1.25
+    logging: *load-logs
+    healthcheck:
+      test: [CMD-SHELL, "pg_isready -U lark -d lark_load"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+  redis:
+    image: redis:7-alpine
+    command:
+      [
+        redis-server,
+        --maxmemory,
+        192mb,
+        --maxmemory-policy,
+        volatile-lru,
+        --appendonly,
+        "yes",
+        --appendfsync,
+        everysec,
+      ]
+    ports: ["127.0.0.1:16379:6379"]
+    volumes: ["redis:/data"]
+    mem_limit: 384m
+    cpus: 0.5
+    logging: *load-logs
+  api:
+    image: lark-cup-load-api:${LOAD_TAG:-fixed}
+    build: { context: "${LOAD_SOURCE:-..}", target: api }
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgres://lark:${LOAD_DB_PASSWORD}@db:5432/lark_load
+      REDIS_URL: redis://redis:6379
+      APP_ORIGIN: "${LOAD_APP_ORIGIN:-http://localhost:18080}"
+      PREVIEW_ORIGIN: "${LOAD_PREVIEW_ORIGIN:-http://localhost:18081}"
+      UPLOAD_DIR: /app/data/uploads
+      TRUST_PROXY: "true"
+      IP_RATE_PER_MINUTE: "${LOAD_IP_RATE:-240}"
+      AUTH_LOGIN_IP_PER_MINUTE: "${LOAD_LOGIN_RATE:-60}"
+      AUTH_REGISTER_IP_PER_MINUTE: "${LOAD_REGISTER_RATE:-10}"
+      LOAD_TEST_ISOLATED: "1"
+      LOAD_TAG: "${LOAD_TAG:-fixed}"
+      LOAD_PROFILE: "${LOAD_PROFILE:-default}"
+      LOAD_METRICS_FILE: /app/load-metrics/server.jsonl
+      LOAD_CAPTURE_PREVIEW_HEADERS: "${LOAD_CAPTURE_PREVIEW_HEADERS:-0}"
+    command: [node, --import, tsx, scripts/load/server.ts]
+    ports: ["127.0.0.1:13001:3001", "127.0.0.1:13002:3002"]
+    volumes:
+      - uploads:/app/data/uploads
+      - ../scripts:/app/scripts:ro
+      - ../.local/load/fixtures:/app/load-fixtures
+      - ../.local/load/metrics:/app/load-metrics
+    depends_on:
+      db: { condition: service_healthy }
+      redis: { condition: service_started }
+    mem_limit: 1536m
+    cpus: 1.5
+    pids_limit: 100
+    logging: *load-logs
+    stop_grace_period: 30s
+  web:
+    image: lark-cup-load-web:${LOAD_TAG:-fixed}
+    build: { context: "${LOAD_SOURCE:-..}", target: web }
+    ports: ["127.0.0.1:18080:80", "127.0.0.1:18081:8081"]
+    volumes: ["../.local/load/nginx.conf:/etc/nginx/nginx.conf:ro"]
+    depends_on: [api]
+    mem_limit: 192m
+    cpus: 0.5
+    logging: *load-logs
+volumes:
+  postgres:
+  redis:
+  uploads:

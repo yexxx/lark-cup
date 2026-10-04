@@ -95,12 +95,14 @@ TLS 模式只发布 80/443，80 重定向到 HTTPS，主站与预览由域名分
 | PostgreSQL 容器       | 1.25 CPU / 1536MB             |
 | Redis 容器            | 0.5 CPU / 384MB               |
 | Nginx 容器            | 0.5 CPU / 192MB               |
-| IP API 限流           | 240 次／分钟，Nginx 另有限流  |
+| IP API 限流           | 2400 次／分钟，Nginx 另有限流 |
 | 用户投票／上传限流    | 20／10 次／分钟               |
 | 列表／榜单缓存        | 10／15 秒，单实例合并同键重建 |
 | 日志                  | 每容器 3 × 10MB               |
 
-修改 `.env` 的 `MAX_INFLIGHT`、`MAX_UPLOADS`、`DB_POOL_MAX`、`IP_RATE_PER_MINUTE` 等参数后重建服务。默认只部署 **一个 API 实例**；不要直接把副本数量加倍而不调整数据库总连接预算、共享文件存储及全局并发预算。
+预览同时最多占用 8 个名额，并计入 API 总在途预算；CSV 导出同时最多 1 个。密码计算同时最多 2 个，额外认证最多排队 6 个、等待 1 秒。大于 128KiB 的 HTML 在独立进程中校验，结构上限为 256 层、100000 个元素，处理截止时间为 3 秒。封面与健康检查保留在途保护，IP 频率预算用于业务 API。
+
+修改 `.env` 的 `MAX_INFLIGHT`、`MAX_UPLOADS`、`MAX_PREVIEWS`、`DB_POOL_MAX`、`IP_RATE_PER_MINUTE` 等参数后重建服务。默认部署 **一个 API 实例**；扩展副本时同步调整数据库总连接预算、共享文件存储及全局并发预算。
 
 页面隐藏时榜单不刷新；首页飞行动画不可见时暂停。列表只加载静态封面，不会启动所有作品的脚本。仅打开详情中的预览才运行作品。
 
@@ -139,4 +141,4 @@ docker compose up -d api web
 
 ## 验证边界
 
-本次开发环境没有 Docker Engine；业务通过真实 PostgreSQL 语义的 PGlite 测试，开发服务也已实际运行。Compose 文件和 Nginx 配置已交付，但 **Docker 构建、容器启动、生产 PostgreSQL/Redis 与 HTTPS 证书链仍需在部署服务器执行上述验收命令**。本地短测不代表正式服务器容量承诺。
+本机使用独立 Colima 环境执行生产 Dockerfile、PostgreSQL、Redis 和 Nginx 的压力及恢复验证，流程见 [压力测试操作说明](stress-testing.md)，实测结果见 [压力测试报告](stress-report.md)。正式服务器仍需按上述命令检查目标硬件、网络、域名、正式 HTTPS 证书链以及备份恢复。

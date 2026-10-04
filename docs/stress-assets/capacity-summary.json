@@ -1,0 +1,266 @@
+[
+  {
+    "phase": "baseline",
+    "size": "large",
+    "scenario": "cached",
+    "rate": 3200,
+    "requestsPerSecond": 3199.9966666666664,
+    "successRate": 0.9999229166666667,
+    "file": "baseline-large-cached-confirm-3200.json",
+    "requestP95Ms": {
+      "read": 4
+    },
+    "actionCounts": {
+      "cached": 959999
+    },
+    "successfulActionCounts": {
+      "cached": 959926
+    }
+  },
+  {
+    "phase": "baseline",
+    "size": "large",
+    "scenario": "database",
+    "rate": 80,
+    "requestsPerSecond": 80,
+    "successRate": 1,
+    "file": "baseline-large-database-confirm-80.json",
+    "requestP95Ms": {
+      "read": 10
+    },
+    "actionCounts": {
+      "database": 24000
+    },
+    "successfulActionCounts": {
+      "database": 24000
+    }
+  },
+  {
+    "phase": "baseline",
+    "size": "large",
+    "scenario": "mixed",
+    "rate": 12,
+    "requestsPerSecond": 33.276666666666664,
+    "successRate": 0.9997222222222222,
+    "file": "baseline-quality-large-mixed-confirm-12.json",
+    "requestP95Ms": {
+      "read": 7,
+      "media": 7,
+      "preview": 6,
+      "vote": 13,
+      "auth": 228,
+      "upload": 15,
+      "write": 7
+    },
+    "actionCounts": {
+      "auth": 190,
+      "browse": 2551,
+      "vote": 528,
+      "upload": 331
+    },
+    "successfulActionCounts": {
+      "browse": 2551,
+      "vote": 528,
+      "auth": 189,
+      "upload": 331
+    }
+  },
+  {
+    "phase": "baseline",
+    "size": "small",
+    "scenario": "cached",
+    "rate": 3200,
+    "requestsPerSecond": 3199.983333333333,
+    "successRate": 0.9999677083333334,
+    "file": "baseline-small-cached-confirm-3200.json",
+    "requestP95Ms": {
+      "read": 4
+    },
+    "actionCounts": {
+      "cached": 959995
+    },
+    "successfulActionCounts": {
+      "cached": 959969
+    }
+  },
+  {
+    "phase": "baseline",
+    "size": "small",
+    "scenario": "database",
+    "rate": 1280,
+    "requestsPerSecond": 1280,
+    "successRate": 1,
+    "file": "baseline-small-database-confirm-1280.json",
+    "requestP95Ms": {
+      "read": 4
+    },
+    "actionCounts": {
+      "database": 384000
+    },
+    "successfulActionCounts": {
+      "database": 384000
+    }
+  },
+  {
+    "phase": "baseline",
+    "size": "small",
+    "scenario": "mixed",
+    "rate": 12,
+    "requestsPerSecond": 33.276666666666664,
+    "successRate": 0.9997222222222222,
+    "file": "baseline-quality-small-mixed-confirm-12.json",
+    "requestP95Ms": {
+      "read": 8,
+      "media": 6,
+      "preview": 6,
+      "vote": 13,
+      "auth": 225,
+      "upload": 16,
+      "write": 7
+    },
+    "actionCounts": {
+      "auth": 190,
+      "browse": 2551,
+      "vote": 528,
+      "upload": 331
+    },
+    "successfulActionCounts": {
+      "browse": 2551,
+      "vote": 528,
+      "auth": 189,
+      "upload": 331
+    }
+  },
+  {
+    "phase": "fixed",
+    "size": "large",
+    "scenario": "cached",
+    "rate": 4800,
+    "requestsPerSecond": 4799.326666666667,
+    "successRate": 0.9952465277777778,
+    "file": "fixed-large-cached-confirm-4800.json",
+    "requestP95Ms": {
+      "read": 5
+    },
+    "actionCounts": {
+      "cached": 1439798
+    },
+    "successfulActionCounts": {
+      "cached": 1433155
+    }
+  },
+  {
+    "phase": "fixed",
+    "size": "large",
+    "scenario": "database",
+    "rate": 240,
+    "requestsPerSecond": 240,
+    "successRate": 1,
+    "file": "fixed-large-database-confirm-240.json",
+    "requestP95Ms": {
+      "read": 7
+    },
+    "actionCounts": {
+      "database": 72000
+    },
+    "successfulActionCounts": {
+      "database": 72000
+    }
+  },
+  {
+    "phase": "fixed",
+    "size": "large",
+    "scenario": "mixed",
+    "rate": 96,
+    "requestsPerSecond": 265.4633333333333,
+    "successRate": 0.9998958333333333,
+    "file": "fixed-large-mixed-confirm-96.json",
+    "requestP95Ms": {
+      "vote": 18,
+      "read": 6,
+      "media": 4,
+      "upload": 14,
+      "write": 5,
+      "preview": 4,
+      "auth": 441
+    },
+    "actionCounts": {
+      "vote": 4225,
+      "browse": 20371,
+      "upload": 2799,
+      "auth": 1405
+    },
+    "successfulActionCounts": {
+      "vote": 4225,
+      "browse": 20371,
+      "upload": 2796,
+      "auth": 1405
+    }
+  },
+  {
+    "phase": "fixed",
+    "size": "small",
+    "scenario": "cached",
+    "rate": 4800,
+    "requestsPerSecond": 4799.986666666667,
+    "successRate": 0.9928319444444444,
+    "file": "fixed-small-cached-confirm-4800.json",
+    "requestP95Ms": {
+      "read": 5
+    },
+    "actionCounts": {
+      "cached": 1439996
+    },
+    "successfulActionCounts": {
+      "cached": 1429678
+    }
+  },
+  {
+    "phase": "fixed",
+    "size": "small",
+    "scenario": "database",
+    "rate": 1280,
+    "requestsPerSecond": 1280,
+    "successRate": 0.9992005208333333,
+    "file": "fixed-small-database-confirm-1280.json",
+    "requestP95Ms": {
+      "read": 4
+    },
+    "actionCounts": {
+      "database": 384000
+    },
+    "successfulActionCounts": {
+      "database": 383693
+    }
+  },
+  {
+    "phase": "fixed",
+    "size": "small",
+    "scenario": "mixed",
+    "rate": 96,
+    "requestsPerSecond": 265.46,
+    "successRate": 0.9998958333333333,
+    "file": "fixed-small-mixed-confirm-96.json",
+    "requestP95Ms": {
+      "vote": 19,
+      "read": 8,
+      "media": 4,
+      "upload": 14,
+      "write": 5,
+      "preview": 4,
+      "auth": 456
+    },
+    "actionCounts": {
+      "vote": 4225,
+      "browse": 20371,
+      "upload": 2799,
+      "auth": 1405
+    },
+    "successfulActionCounts": {
+      "vote": 4225,
+      "browse": 20371,
+      "upload": 2796,
+      "auth": 1405
+    }
+  }
+]

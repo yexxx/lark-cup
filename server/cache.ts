@@ -3,7 +3,17 @@ import { config } from "./config.js";
 export class Cache {
   private redis?: Redis;
   private local = new Map<string, { value: string; until: number }>();
+  private rates = new Map<string, { value: number; until: number }>();
   private pending = new Map<string, Promise<any>>();
+  private async available<T>(operation: () => Promise<T>): Promise<T> {
+    try {
+      return await operation();
+    } catch {
+      throw Object.assign(new Error("缓存服务暂时不可用，请稍后再试"), {
+        statusCode: 503,
+      });
+    }
+  }
   constructor(memory = false) {
     if (config.redisUrl && !memory) {
       this.redis = new Redis(config.redisUrl, {
@@ -31,7 +41,7 @@ export class Cache {
       });
   }
   async get(key: string) {
-    if (this.redis) return this.redis.get(key);
+    if (this.redis) return this.available(() => this.redis!.get(key));
     const e = this.local.get(key);
     if (e && e.until > Date.now()) return e.value;
     this.local.delete(key);
@@ -39,35 +49,52 @@ export class Cache {
   }
   async set(key: string, value: string, seconds: number) {
     if (this.redis) {
-      await this.redis.set(key, value, "EX", seconds);
+      await this.available(() => this.redis!.set(key, value, "EX", seconds));
       return;
     }
     if (this.local.size > 5000) this.local.clear();
     this.local.set(key, { value, until: Date.now() + seconds * 1000 });
   }
   async take(key: string, limit: number, seconds = 60) {
-    if (this.redis)
-      return (
-        Number(
-          await this.redis.eval(
-            "local n=redis.call('INCR',KEYS[1]); if n==1 then redis.call('EXPIRE',KEYS[1],ARGV[1]) end; return n",
-            1,
-            `rate:${key}`,
+    if (this.redis) {
+      const n = Number(
+        await this.available(() =>
+          this.redis!.eval(
+            `local time=redis.call('TIME')
+local now=tonumber(time[1])*1000+math.floor(tonumber(time[2])/1000)
+local expired=redis.call('ZRANGEBYSCORE',KEYS[2],'-inf',now,'LIMIT',0,128)
+for _,key in ipairs(expired) do redis.call('HDEL',KEYS[1],key); redis.call('ZREM',KEYS[2],key) end
+local untilAt=redis.call('ZSCORE',KEYS[2],ARGV[1])
+if not untilAt or tonumber(untilAt)<=now then
+ if redis.call('ZCARD',KEYS[2])>=100000 then return -1 end
+ redis.call('HSET',KEYS[1],ARGV[1],1)
+ redis.call('ZADD',KEYS[2],now+tonumber(ARGV[2])*1000,ARGV[1])
+ return 1
+end
+return redis.call('HINCRBY',KEYS[1],ARGV[1],1)`,
+            2,
+            "rate:counts",
+            "rate:windows",
+            key,
             seconds,
           ),
-        ) <= limit
+        ),
       );
+      return n > 0 && n <= limit;
+    }
     const k = `rate:${key}`;
-    const entry = this.local.get(k);
+    const entry = this.rates.get(k);
     const previous = entry && entry.until > Date.now() ? entry : undefined;
-    const n = Number(previous?.value || 0) + 1;
-    this.local.set(k, {
-      value: String(n),
+    const n = (previous?.value || 0) + 1;
+    if (!previous && this.rates.size >= 10000) {
+      for (const [id, e] of this.rates)
+        if (e.until <= Date.now()) this.rates.delete(id);
+      if (this.rates.size >= 10000) return false;
+    }
+    this.rates.set(k, {
+      value: n,
       until: previous?.until || Date.now() + seconds * 1000,
     });
-    if (this.local.size > 10000)
-      for (const [id, e] of this.local)
-        if (e.until < Date.now()) this.local.delete(id);
     return n <= limit;
   }
   async cached<T>(key: string, ttl: number, fn: () => Promise<T>): Promise<T> {
@@ -84,6 +111,7 @@ export class Cache {
     return work;
   }
   async close() {
-    if (this.redis) await this.redis.quit();
+    if (this.redis)
+      await this.redis.quit().catch(() => this.redis!.disconnect());
   }
 }

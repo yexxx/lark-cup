@@ -88,7 +88,21 @@ export async function api<T = any>(
       signal: controller.signal,
       headers,
     });
-    const data = await response.json();
+    const text = await response.text();
+    let data: any;
+    try {
+      data = JSON.parse(text);
+    } catch {
+      if (response.ok) throw new ApiError("服务器响应异常，请稍后重试", 502);
+      data = {
+        message:
+          response.status === 429
+            ? "请求过于频繁，请稍后再试"
+            : response.status >= 500
+              ? "服务暂时不可用，请稍后再试"
+              : "请求失败，请稍后重试",
+      };
+    }
     if (controller.signal.aborted || (bound && version !== sessionVersion()))
       throw cancelled();
     if (!response.ok) {
@@ -163,7 +177,18 @@ export async function upload(
             reject(new ApiError(data.message || "上传失败", xhr.status));
           }
         } catch {
-          reject(new Error("上传响应异常"));
+          reject(
+            new ApiError(
+              xhr.status === 429
+                ? "请求过于频繁，请稍后再试"
+                : xhr.status >= 500
+                  ? "服务暂时不可用，请稍后再试"
+                  : xhr.status === 413
+                    ? "上传文件超过大小限制"
+                    : "上传响应异常，请稍后重试",
+              xhr.status || 502,
+            ),
+          );
         }
       };
       const form = new FormData();

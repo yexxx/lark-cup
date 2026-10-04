@@ -18,6 +18,49 @@ const N = 131072,
   r = 8,
   p = 1;
 let active = 0;
+let admitted = 0;
+const waiting: {
+  resolve: () => void;
+  reject: (error: Error) => void;
+  timer: ReturnType<typeof setTimeout>;
+}[] = [];
+export const passwordBudget = () => ({
+  active,
+  admitted,
+  waiting: waiting.length,
+});
+export async function queuePasswordOperation<T>(operation: () => Promise<T>) {
+  if (admitted < 2) admitted++;
+  else {
+    if (waiting.length >= 6) fail(503, "登录服务繁忙，请稍后再试");
+    await new Promise<void>((resolve, reject) => {
+      const waiter = {
+        resolve,
+        reject,
+        timer: setTimeout(() => {
+          const index = waiting.indexOf(waiter);
+          if (index < 0) return;
+          waiting.splice(index, 1);
+          reject(
+            Object.assign(new Error("登录服务繁忙，请稍后再试"), {
+              statusCode: 503,
+            }),
+          );
+        }, 1000),
+      };
+      waiting.push(waiter);
+    });
+  }
+  try {
+    return await operation();
+  } finally {
+    const next = waiting.shift();
+    if (next) {
+      clearTimeout(next.timer);
+      next.resolve();
+    } else admitted--;
+  }
+}
 async function derive(password: string, salt: Buffer) {
   if (active >= 2) fail(503, "登录服务繁忙，请稍后再试");
   active++;

@@ -165,11 +165,20 @@ export function createSessionStore(db: DB, clock = () => new Date()) {
         return (
           (
             await db.query<User>(
-              `UPDATE auth_sessions s SET last_seen_at=$2 FROM users u WHERE s.token_hash=$1 AND u.id=s.user_id AND u.status='active' AND s.expires_at>$2 AND s.last_seen_at>$3 RETURNING u.id,u.name,u.role,u.status`,
+              `WITH live AS (
+                SELECT u.id,u.name,u.role,u.status,s.token_hash FROM auth_sessions s JOIN users u ON u.id=s.user_id
+                WHERE s.token_hash=$1 AND u.status='active' AND s.expires_at>$2 AND s.last_seen_at>$3
+              ), touched AS (
+                UPDATE auth_sessions SET last_seen_at=$2 WHERE token_hash IN (SELECT token_hash FROM live) AND last_seen_at<=$4
+              ) SELECT id,name,role,status FROM live`,
               [
                 digest(token),
                 now,
                 new Date(now.getTime() - config.authIdleSeconds * 1000),
+                new Date(
+                  now.getTime() -
+                    Math.min(60, config.authIdleSeconds / 4) * 1000,
+                ),
               ],
             )
           ).rows[0] || null

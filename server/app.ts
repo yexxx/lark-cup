@@ -1,4 +1,4 @@
-import Fastify, { type FastifyRequest } from "fastify";
+import Fastify, { type FastifyRequest, type FastifyReply } from "fastify";
 import multipart from "@fastify/multipart";
 import { z, ZodError } from "zod";
 import { randomUUID, createHmac, timingSafeEqual } from "node:crypto";
@@ -7,10 +7,11 @@ import { createReadStream } from "node:fs";
 import { Readable } from "node:stream";
 import path from "node:path";
 import sharp from "sharp";
-import { validateHtml } from "./html.js";
+import { validateHtmlUpload } from "./html-upload.js";
 import type { DB } from "./db.js";
 import { Cache } from "./cache.js";
 import { config } from "./config.js";
+import { queuePasswordOperation } from "./password.js";
 import {
   localAuth,
   cleanupSessions,
@@ -39,6 +40,7 @@ const pagination = z.object({
   q: z.string().trim().max(80).default(""),
 });
 const counted = `SELECT w.*, COALESCE(v.total,0)::integer AS votes FROM works w LEFT JOIN (SELECT work_id, count(*) AS total FROM votes WHERE valid GROUP BY work_id) v ON v.work_id=w.id`;
+const targeted = `SELECT w.*, (SELECT count(*)::integer FROM votes v WHERE v.work_id=w.id AND v.valid) AS votes FROM works w`;
 const selectFields = (w: any, reveal = false) => ({
   id: w.id,
   number: Number(w.number),
@@ -114,11 +116,32 @@ export async function buildApp(
   });
   let inflight = 0;
   let activeUploads = 0;
+  let activePreviews = 0;
+  let activeExports = 0;
   const active = new WeakSet<FastifyRequest>();
   const uploading = new WeakSet<FastifyRequest>();
+  const previewing = new WeakSet<FastifyRequest>();
+  const handling = new WeakSet<FastifyRequest>();
   const release = (req: FastifyRequest) => {
     if (active.delete(req)) inflight--;
     if (uploading.delete(req)) activeUploads--;
+    if (previewing.delete(req)) activePreviews--;
+  };
+  const takeBudget = async (
+    req: FastifyRequest,
+    reply: FastifyReply,
+    key: string,
+    limit: number,
+  ) => {
+    handling.add(req);
+    try {
+      const allowed = await cache.take(key, limit);
+      if (req.raw.aborted || reply.raw.destroyed) fail(400, "请求已取消");
+      return allowed;
+    } finally {
+      handling.delete(req);
+      if (req.raw.aborted || reply.raw.destroyed) release(req);
+    }
   };
   app.addHook("onRequest", async (req, reply) => {
     reply
@@ -132,28 +155,75 @@ export async function buildApp(
         .send({ message: "服务器繁忙，请稍后再试" });
     inflight++;
     active.add(req);
-    req.raw.once("aborted", () => release(req));
+    const disconnected = () => {
+      if (!handling.has(req)) release(req);
+    };
+    req.raw.once("aborted", disconnected);
+    reply.raw.once("close", disconnected);
     if (
       ["POST", "PATCH", "PUT", "DELETE"].includes(req.method) &&
       req.headers.origin !== config.appOrigin
     )
       fail(403, "请求来源不允许");
-    if (!(await cache.take(`ip:${req.ip}`, config.ipRate)))
+    if (
+      req.url.split("?")[0] === "/api/v1/health" ||
+      req.url.startsWith("/media/")
+    )
+      return;
+    if (!(await takeBudget(req, reply, `ip:${req.ip}`, config.ipRate)))
       return reply
         .code(429)
         .header("Retry-After", "60")
         .send({ message: "请求过于频繁，请稍后再试" });
   });
-  app.addHook("onResponse", async (req) => release(req));
-  app.addHook("onTimeout", async (req) => release(req));
+  for (const service of [app, preview]) {
+    service.addHook("onResponse", async (req) => release(req));
+    service.addHook("preHandler", async (req) => {
+      handling.add(req);
+    });
+    service.addHook("onSend", async (req, reply, payload) => {
+      handling.delete(req);
+      if (reply.raw.destroyed) release(req);
+      return payload;
+    });
+    service.addHook("onError", async (req, reply) => {
+      handling.delete(req);
+      if (reply.raw.destroyed) release(req);
+    });
+    service.addHook("onTimeout", async (req) => {
+      if (!handling.has(req)) release(req);
+    });
+  }
   const errors = (error: any, req: any, reply: any) => {
+    reply.type("application/json").removeHeader("Content-Disposition");
     if (error instanceof ZodError)
       return reply.code(400).send({
         message: error.issues
           .map((i: any) => `${i.path.join(".")}: ${i.message}`)
           .join("；"),
       });
-    const status = error.statusCode || (error.code === "23505" ? 409 : 500);
+    const unavailable =
+      [
+        "ECONNREFUSED",
+        "ECONNRESET",
+        "EPIPE",
+        "ETIMEDOUT",
+        "ENOSPC",
+        "57P01",
+        "57P02",
+        "57P03",
+        "57014",
+        "53300",
+        "08006",
+        "08003",
+        "25P03",
+      ].includes(error.code) ||
+      /connection terminated|timeout exceeded when trying to connect/i.test(
+        error.message || "",
+      );
+    const status =
+      error.statusCode ||
+      (error.code === "23505" ? 409 : unavailable ? 503 : 500);
     if (status === 429 || status === 503)
       reply.header("Retry-After", status === 429 ? "60" : "2");
     if (status >= 500) req.log.error(error);
@@ -205,10 +275,10 @@ export async function buildApp(
     user: await auth.currentUser(req),
   }));
   app.post("/api/v1/auth/login", async (req, reply) => ({
-    user: await auth.login(req, reply),
+    user: await queuePasswordOperation(() => auth.login(req, reply)),
   }));
   app.post("/api/v1/auth/register", async (req, reply) => ({
-    user: await auth.register(req, reply),
+    user: await queuePasswordOperation(() => auth.register(req, reply)),
   }));
   app.post("/api/v1/auth/logout", async (req, reply) => {
     if (req.headers["x-lark-user"]) await requireUser(auth, req);
@@ -216,7 +286,7 @@ export async function buildApp(
     return { ok: true };
   });
   app.post("/api/v1/auth/password", async (req, reply) => {
-    await auth.changePassword(req, reply);
+    await queuePasswordOperation(() => auth.changePassword(req, reply));
     return { ok: true };
   });
   app.get("/api/v1/competition", async () => {
@@ -256,7 +326,7 @@ export async function buildApp(
               : "w.recommended DESC,votes DESC,w.created_at DESC,w.id";
         const rows = (
           await db.query(
-            `${counted} ${where} ORDER BY ${order} LIMIT $3 OFFSET $4`,
+            `${p.q ? targeted : counted} ${where} ORDER BY ${order} LIMIT $3 OFFSET $4`,
             [...args, p.size, (p.page - 1) * p.size],
           )
         ).rows;
@@ -307,7 +377,7 @@ export async function buildApp(
     return {
       items: (
         await db.query(
-          `${counted} WHERE w.owner_id=$1 ORDER BY w.updated_at DESC LIMIT 200`,
+          `${targeted} WHERE w.owner_id=$1 ORDER BY w.updated_at DESC LIMIT 200`,
           [user.id],
         )
       ).rows.map((w) => selectFields(w, true)),
@@ -338,7 +408,7 @@ export async function buildApp(
   });
   app.get("/api/v1/works/:id", async (req) => {
     const id = uuid((req.params as any).id);
-    const w = (await db.query(`${counted} WHERE w.id=$1`, [id])).rows[0];
+    const w = (await db.query(`${targeted} WHERE w.id=$1`, [id])).rows[0];
     const user = await auth.currentUser(req);
     if (
       !w ||
@@ -377,7 +447,7 @@ export async function buildApp(
     if (part.file.truncated) fail(413, "HTML 最大 5MB");
     let kind: string, mime: string, extension: string;
     if (/\.html?$/i.test(part.filename)) {
-      validateHtml(data);
+      await validateHtmlUpload(data);
       kind = "html";
       mime = "text/html";
       extension = "html";
@@ -409,14 +479,18 @@ export async function buildApp(
     const id = randomUUID();
     const filename = `${id}.${extension}`;
     const destination = path.join(uploads, filename);
-    await writeFile(destination, data, { flag: "wx" });
     try {
+      await writeFile(destination, data, { flag: "wx" });
       await db.query(
         "INSERT INTO assets(id,owner_id,kind,filename,mime,bytes) VALUES($1,$2,$3,$4,$5,$6)",
         [id, user.id, kind, filename, mime, data.length],
       );
-    } catch (e) {
-      await unlink(destination);
+    } catch (e: any) {
+      if (e.code !== "EEXIST")
+        await unlink(destination).catch((cleanupError) => {
+          if (cleanupError.code !== "ENOENT")
+            req.log.error(cleanupError, "Upload cleanup failed");
+        });
       throw e;
     }
     return { id, kind, bytes: data.length };
@@ -561,14 +635,20 @@ export async function buildApp(
       .send(createReadStream(path.join(uploads, a.filename)));
   });
   preview.addHook("onRequest", async (_req, reply) => {
-    if (inflight >= config.maxInflight)
+    if (inflight >= config.maxInflight || activePreviews >= config.maxPreviews)
       return reply
         .code(503)
         .header("Retry-After", "2")
         .send({ message: "服务器繁忙，请稍后再试" });
     inflight++;
     active.add(_req);
-    _req.raw.once("aborted", () => release(_req));
+    activePreviews++;
+    previewing.add(_req);
+    const disconnected = () => {
+      if (!handling.has(_req)) release(_req);
+    };
+    _req.raw.once("aborted", disconnected);
+    reply.raw.once("close", disconnected);
     reply
       .header(
         "Content-Security-Policy",
@@ -581,11 +661,9 @@ export async function buildApp(
         "camera=(), microphone=(), geolocation=(), payment=(), usb=()",
       )
       .header("Cache-Control", "no-store");
-    if (!(await cache.take(`preview:${_req.ip}`, 120)))
+    if (!(await takeBudget(_req, reply, `preview:${_req.ip}`, 120)))
       fail(429, "预览请求过于频繁");
   });
-  preview.addHook("onResponse", async (req) => release(req));
-  preview.addHook("onTimeout", async (req) => release(req));
   preview.get("/preview/:id", async (req, reply) => {
     const id = uuid((req.params as any).id);
     const a = (
@@ -643,7 +721,7 @@ export async function buildApp(
       .parse((req.query as any).status || "all");
     const rows = (
       await db.query(
-        `${counted} WHERE ($1='all' OR w.status=$1) ORDER BY w.updated_at DESC LIMIT $2 OFFSET $3`,
+        `${targeted} WHERE ($1='all' OR w.status=$1) ORDER BY w.updated_at DESC LIMIT $2 OFFSET $3`,
         [state, p.size, (p.page - 1) * p.size],
       )
     ).rows;
@@ -845,27 +923,31 @@ export async function buildApp(
         .replace(/^[=+@\-\t\r]/, "'$&")
         .replace(/"/g, '""')}"`;
     async function* rows() {
-      yield "\uFEFF";
-      let offset = 0;
-      let first = true;
-      while (true) {
-        const r = (
-          await db.query(
-            kind === "works"
-              ? `${counted} ORDER BY w.number LIMIT 500 OFFSET $1`
-              : "SELECT * FROM votes ORDER BY created_at,id LIMIT 500 OFFSET $1",
-            [offset],
-          )
-        ).rows;
-        if (!r.length) break;
-        if (first) {
-          yield Object.keys(r[0]).map(escape).join(",") + "\r\n";
-          first = false;
+      if (activeExports >= 1) fail(503, "已有导出正在处理，请稍后再试");
+      activeExports++;
+      try {
+        let first = true;
+        const sql =
+          kind === "works"
+            ? `${counted} ORDER BY w.number`
+            : "SELECT * FROM votes ORDER BY created_at,id";
+        const batches = db.iterate
+          ? db.iterate(sql)
+          : (async function* () {
+              yield (await db.query(sql)).rows;
+            })();
+        for await (const r of batches) {
+          if (!r.length) continue;
+          if (first) {
+            yield "\uFEFF" + Object.keys(r[0]).map(escape).join(",") + "\r\n";
+            first = false;
+          }
+          for (const row of r)
+            yield Object.values(row).map(escape).join(",") + "\r\n";
         }
-        for (const row of r)
-          yield Object.values(row).map(escape).join(",") + "\r\n";
-        if (r.length < 500) break;
-        offset += 500;
+        if (first) yield "\uFEFF";
+      } finally {
+        activeExports--;
       }
     }
     return reply
@@ -877,6 +959,7 @@ export async function buildApp(
     app,
     preview,
     cache,
+    metrics: () => ({ inflight, activeUploads, activePreviews, activeExports }),
     close: async () => {
       await app.close();
       await preview.close();
