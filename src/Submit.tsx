@@ -1,4 +1,10 @@
-import { useEffect, useState, type FormEvent } from "react";
+import {
+  useEffect,
+  useRef,
+  useState,
+  type FormEvent,
+  type ClipboardEvent,
+} from "react";
 import {
   ArrowUpRight,
   UploadCloud,
@@ -14,7 +20,18 @@ import {
 } from "lucide-react";
 import { api, send, upload } from "./api";
 import type { User } from "./auth";
-import { type Work, type Competition, statusNames } from "./types";
+import {
+  type Work,
+  type Competition,
+  type AutoCover,
+  statusNames,
+} from "./types";
+import {
+  pastedFile,
+  htmlFile,
+  validateUploadFile,
+  type UploadKind,
+} from "./uploads";
 import { ErrorBox, Loading, Modal } from "./ui";
 export function SubmitPage({
   id,
@@ -36,11 +53,26 @@ export function SubmitPage({
     prompt: competition.prompt,
     track: "classic",
     coverId: null as string | null,
+    coverMode: "auto" as "auto" | "manual",
     htmlId: null as string | null,
     version: 1,
   });
   const [cover, setCover] = useState<File | null>(null);
   const [html, setHtml] = useState<File | null>(null);
+  const [autoCover, setAutoCover] = useState<AutoCover | null>(null);
+  const [manualUrl, setManualUrl] = useState<string | null>(null);
+  const [transfers, setTransfers] = useState({ html: "", cover: "" });
+  const [failed, setFailed] = useState({ html: false, cover: false });
+  const [pasteOpen, setPasteOpen] = useState(false);
+  const [source, setSource] = useState("");
+  const [published, setPublished] = useState(false);
+  const operations = useRef({ html: 0, cover: 0 });
+  const controllers = useRef<{
+    html?: AbortController;
+    cover?: AbortController;
+    save?: AbortController;
+    auto?: AbortController;
+  }>({});
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [progress, setProgress] = useState("");
@@ -48,9 +80,46 @@ export function SubmitPage({
   const [saveId, setSaveId] = useState(id);
   const [confirm, setConfirm] = useState(false);
   useEffect(() => {
+    return () => {
+      operations.current.html++;
+      operations.current.cover++;
+      Object.values(controllers.current).forEach((controller) =>
+        controller?.abort(),
+      );
+    };
+  }, [id, user?.id]);
+  useEffect(() => {
+    const controller = new AbortController();
+    setLoaded(!id);
+    setSaveId(id);
+    setForm({
+      title: "",
+      description: "",
+      model: "",
+      prompt: competition.prompt,
+      track: "classic",
+      coverId: null,
+      htmlId: null,
+      coverMode: "auto",
+      version: 1,
+    });
+    setHtml(null);
+    setCover(null);
+    setAutoCover(null);
+    setManualUrl(null);
+    setTransfers({ html: "", cover: "" });
+    setFailed({ html: false, cover: false });
+    setPublished(false);
+    setBusy(false);
+    setError("");
+    setProgress("");
+    setConfirm(false);
+    setPasteOpen(false);
+    setSource("");
     if (!id) return;
-    api(`/works/${id}`)
+    api<Work>(`/works/${id}`, { signal: controller.signal })
       .then((w: Work) => {
+        if (controller.signal.aborted) return;
         setForm({
           title: w.title,
           description: w.description,
@@ -58,67 +127,220 @@ export function SubmitPage({
           prompt: w.prompt,
           track: w.track,
           coverId: w.coverId,
+          coverMode: w.coverMode,
           htmlId: w.htmlId,
           version: w.version,
         });
+        setPublished(w.status === "approved");
+        if (w.coverMode === "manual") setManualUrl(w.coverUrl);
+        const sequence = operations.current.html;
+        if (w.coverMode === "auto" && w.coverId && w.coverUrl)
+          setAutoCover({
+            id: w.coverId,
+            url: w.coverUrl,
+            status: w.coverStatus || "pending",
+          });
+        if (w.htmlId)
+          void api<AutoCover>(`/uploads/${w.htmlId}/cover`, {
+            signal: controller.signal,
+          })
+            .then((cover) => {
+              if (
+                !controller.signal.aborted &&
+                sequence === operations.current.html
+              )
+                setAutoCover(cover);
+            })
+            .catch(() => {});
         setLoaded(true);
       })
       .catch((e) => {
-        setError(e.message);
+        if (!controller.signal.aborted) setError(e.message);
       });
-  }, [id]);
+    return () => controller.abort();
+  }, [id, user?.id]);
+  useEffect(() => {
+    if (!form.htmlId || autoCover?.status !== "pending") return;
+    const controller = new AbortController();
+    const sequence = operations.current.html;
+    let timer: ReturnType<typeof setTimeout>;
+    const poll = async () => {
+      try {
+        const result = await api<AutoCover>(`/uploads/${form.htmlId}/cover`, {
+          signal: controller.signal,
+        });
+        if (controller.signal.aborted || sequence !== operations.current.html)
+          return;
+        setAutoCover(result);
+        if (result.status !== "pending") return;
+      } catch {
+        if (controller.signal.aborted) return;
+      }
+      timer = setTimeout(() => void poll(), 2000);
+    };
+    timer = setTimeout(() => void poll(), 2000);
+    return () => {
+      clearTimeout(timer);
+      controller.abort();
+    };
+  }, [form.htmlId, autoCover?.status, user?.id]);
+
+  async function selectFile(file: File, kind: UploadKind) {
+    try {
+      validateUploadFile(file, kind);
+    } catch (e) {
+      setError((e as Error).message);
+      return;
+    }
+    controllers.current[kind]?.abort();
+    if (kind === "html") controllers.current.auto?.abort();
+    const controller = (controllers.current[kind] = new AbortController());
+    const sequence = ++operations.current[kind];
+    if (kind === "html") setHtml(file);
+    else setCover(file);
+    setError("");
+    setFailed((f) => ({ ...f, [kind]: false }));
+    setTransfers((t) => ({ ...t, [kind]: "0%" }));
+    try {
+      const result = await upload(
+        file,
+        (p) => {
+          if (sequence === operations.current[kind])
+            setTransfers((t) => ({ ...t, [kind]: `${p}%` }));
+        },
+        controller.signal,
+      );
+      if (sequence !== operations.current[kind] || controller.signal.aborted)
+        return;
+      if (result.kind !== kind) throw new Error("上传文件类型与所选位置不一致");
+      if (kind === "html") {
+        if (!result.autoCover) throw new Error("自动封面响应异常，请重试");
+        const generated = result.autoCover;
+        setAutoCover(generated);
+        setForm((f) => ({
+          ...f,
+          htmlId: result.id,
+          coverId: f.coverMode === "auto" ? generated.id : f.coverId,
+        }));
+      } else {
+        setManualUrl(`/media/${result.id}`);
+        setForm((f) => ({ ...f, coverId: result.id, coverMode: "manual" }));
+      }
+    } catch (e) {
+      if (sequence === operations.current[kind] && !controller.signal.aborted) {
+        setFailed((f) => ({ ...f, [kind]: true }));
+        setError((e as Error).message);
+      }
+    } finally {
+      if (sequence === operations.current[kind])
+        setTransfers((t) => ({ ...t, [kind]: "" }));
+    }
+  }
+  function paste(e: ClipboardEvent, kind: UploadKind) {
+    e.preventDefault();
+    if (busy) return;
+    try {
+      void selectFile(pastedFile(e.clipboardData, kind), kind);
+    } catch (err) {
+      setError((err as Error).message);
+    }
+  }
+  async function useAutomaticCover() {
+    controllers.current.cover?.abort();
+    operations.current.cover++;
+    setCover(null);
+    setManualUrl(null);
+    setTransfers((t) => ({ ...t, cover: "" }));
+    setFailed((f) => ({ ...f, cover: false }));
+    setError("");
+    setForm((f) => ({
+      ...f,
+      coverMode: "auto",
+      coverId: autoCover?.id || null,
+    }));
+    if (form.htmlId && !autoCover) {
+      await regenerateCover();
+    }
+  }
+  async function regenerateCover() {
+    if (!form.htmlId) return;
+    controllers.current.auto?.abort();
+    const controller = (controllers.current.auto = new AbortController());
+    const sequence = operations.current.html;
+    try {
+      const cover = await api<AutoCover>(
+        `/uploads/${form.htmlId}/cover/retry`,
+        {
+          method: "POST",
+          signal: controller.signal,
+        },
+      );
+      if (controller.signal.aborted || sequence !== operations.current.html)
+        return;
+      setAutoCover(cover);
+      setForm((f) =>
+        f.coverMode === "auto" ? { ...f, coverId: cover.id } : f,
+      );
+    } catch (e) {
+      if (!controller.signal.aborted && sequence === operations.current.html)
+        setError((e as Error).message);
+    }
+  }
+  const uploading = !!(transfers.html || transfers.cover);
   const field = (key: string, value: string) =>
     setForm((f) => ({ ...f, [key]: value }));
   async function save(submit: boolean) {
+    if (busy || uploading || failed.html || failed.cover) return;
     if (!user) {
       login();
       return;
     }
     setBusy(true);
     setError("");
+    const controller = (controllers.current.save = new AbortController());
     try {
-      let coverId = form.coverId,
-        htmlId = form.htmlId;
-      if (cover) {
-        coverId = (await upload(cover, (p) => setProgress(`上传封面 ${p}%`)))
-          .id;
-        setForm((f) => ({ ...f, coverId }));
-        setCover(null);
-      }
-      if (html) {
-        htmlId = (await upload(html, (p) => setProgress(`上传 HTML ${p}%`))).id;
-        setForm((f) => ({ ...f, htmlId }));
-        setHtml(null);
-      }
       setProgress("保存作品…");
-      const w: Work = await send(
-        saveId ? `/works/${saveId}` : "/works",
-        { ...form, coverId, htmlId },
-        saveId ? "PUT" : "POST",
-      );
+      const w = await api<Work>(saveId ? `/works/${saveId}` : "/works", {
+        body: JSON.stringify(form),
+        method: saveId ? "PUT" : "POST",
+        signal: controller.signal,
+      });
+      if (controller.signal.aborted) return;
       setSaveId(w.id);
-      setForm((f) => ({ ...f, version: w.version }));
+      setForm((f) => ({ ...f, version: w.version, coverId: w.coverId }));
       if (submit) {
-        await send(`/works/${w.id}/submit`);
-        notify("投稿成功！审核结果会显示在“我的作品”。");
-        location.hash = "/mine";
-      } else notify("草稿已保存，可继续编辑或提交审核。");
+        await api(`/works/${w.id}/submit`, {
+          method: "POST",
+          signal: controller.signal,
+        });
+        if (controller.signal.aborted) return;
+        notify("作品已发布，已进入作品展区。");
+        location.hash = `/work/${w.id}`;
+      } else
+        notify(
+          published
+            ? "作品已更新，继续在展区展示。"
+            : "草稿已保存，可继续编辑或发布。",
+        );
     } catch (e) {
-      setError((e as Error).message);
+      if (!controller.signal.aborted) setError((e as Error).message);
     } finally {
-      setBusy(false);
-      setProgress("");
-      setConfirm(false);
+      if (!controller.signal.aborted) {
+        setBusy(false);
+        setProgress("");
+        setConfirm(false);
+      }
     }
   }
   function onSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
+    if (busy || uploading || failed.html || failed.cover) return;
     const action = (e.nativeEvent as SubmitEvent).submitter?.getAttribute(
       "value",
     );
     if (action === "submit") {
-      if (!(cover || form.coverId) || !(html || form.htmlId)) {
-        setError("提交审核前，请上传封面和 HTML 文件");
+      if (!form.htmlId) {
+        setError("发布作品前，请上传或粘贴 HTML");
         return;
       }
       setConfirm(true);
@@ -172,9 +394,8 @@ export function SubmitPage({
                 />
               </label>
               <label>
-                作品介绍 <b>*</b>
+                作品介绍 <small className="optional-label">选填</small>
                 <textarea
-                  required
                   maxLength={3000}
                   rows={4}
                   placeholder="它有什么故事？可以怎样互动？"
@@ -183,9 +404,8 @@ export function SubmitPage({
                 />
               </label>
               <label>
-                使用的模型 <b>*</b>
+                使用的模型 <small className="optional-label">选填</small>
                 <input
-                  required
                   maxLength={100}
                   placeholder="例如：你使用的模型及版本"
                   value={form.model}
@@ -197,50 +417,144 @@ export function SubmitPage({
                 <h2>上传作品</h2>
               </div>
               <div className="upload-grid">
-                <label className="upload-box">
-                  <ImagePlus size={30} />
-                  <strong>
-                    {cover?.name ||
-                      (form.coverId ? "封面已保存 · 可替换" : "上传作品封面")}
-                  </strong>
-                  <small>JPEG / PNG / WebP · 最大 2MB</small>
-                  <input
-                    type="file"
-                    accept="image/jpeg,image/png,image/webp"
-                    aria-label="上传封面"
-                    onChange={(e) => {
-                      const f = e.target.files?.[0];
-                      if (f && f.size > 2 * 1024 * 1024) {
-                        setError("封面不能超过 2MB");
+                <div className="upload-column">
+                  <label
+                    className="upload-box"
+                    tabIndex={0}
+                    onPaste={(e) => paste(e, "cover")}
+                    aria-label="封面粘贴区"
+                  >
+                    {(
+                      form.coverMode === "auto" ? autoCover?.url : manualUrl
+                    ) ? (
+                      <img
+                        className="upload-cover-preview"
+                        src={
+                          (form.coverMode === "auto"
+                            ? autoCover?.url
+                            : manualUrl)!
+                        }
+                        alt="作品封面预览"
+                      />
+                    ) : (
+                      <ImagePlus size={30} />
+                    )}
+                    <strong>
+                      {form.coverMode === "manual"
+                        ? cover?.name || "自定义封面 · 可替换"
+                        : autoCover
+                          ? "HTML 自动封面"
+                          : "作品封面 · 选填"}
+                    </strong>
+                    <small>点击选择或在此粘贴图片 · 最大 2MB</small>
+                    <input
+                      type="file"
+                      accept="image/jpeg,image/png,image/webp"
+                      aria-label="上传封面"
+                      onChange={(e) => {
+                        const f = e.target.files?.[0];
+                        if (f) void selectFile(f, "cover");
                         e.target.value = "";
-                        return;
-                      }
-                      setCover(f || null);
-                    }}
-                  />
-                </label>
-                <label className="upload-box">
-                  <FileCode2 size={30} />
-                  <strong>
-                    {html?.name ||
-                      (form.htmlId ? "HTML 已保存 · 可替换" : "上传 HTML 文件")}
-                  </strong>
-                  <small>单个 .html 文件 · 最大 5MB</small>
-                  <input
-                    type="file"
-                    accept=".html,.htm,text/html"
-                    aria-label="上传 HTML 作品"
-                    onChange={(e) => {
-                      const f = e.target.files?.[0];
-                      if (f && f.size > 5 * 1024 * 1024) {
-                        setError("HTML 不能超过 5MB");
+                      }}
+                    />
+                  </label>
+                  <p className="help" aria-live="polite">
+                    {transfers.cover
+                      ? `上传封面 ${transfers.cover}`
+                      : form.coverMode === "manual"
+                        ? "JPEG / PNG / WebP · 使用你的自定义封面"
+                        : autoCover?.status === "pending"
+                          ? "自动封面准备中，当前封面可直接发布。"
+                          : autoCover?.status === "fallback"
+                            ? "当前使用占位封面，可直接发布，也可重新生成或上传图片。"
+                            : autoCover
+                              ? "已根据 HTML 生成封面。"
+                              : "提供 HTML 后自动生成封面。"}
+                  </p>
+                  <div className="upload-actions">
+                    {form.coverMode === "manual" || failed.cover ? (
+                      <button
+                        type="button"
+                        className="button small"
+                        onClick={useAutomaticCover}
+                      >
+                        使用自动封面
+                      </button>
+                    ) : null}
+                    {failed.cover && cover && (
+                      <button
+                        type="button"
+                        className="button small"
+                        onClick={() => void selectFile(cover, "cover")}
+                      >
+                        重试封面上传
+                      </button>
+                    )}
+                    {form.htmlId && autoCover?.status === "fallback" && (
+                      <button
+                        type="button"
+                        className="button small"
+                        onClick={() => void regenerateCover()}
+                      >
+                        重新生成封面
+                      </button>
+                    )}
+                  </div>
+                </div>
+                <div className="upload-column">
+                  <label
+                    className="upload-box"
+                    tabIndex={0}
+                    onPaste={(e) => paste(e, "html")}
+                    aria-label="HTML 粘贴区"
+                  >
+                    <FileCode2 size={30} />
+                    <strong>
+                      {html?.name ||
+                        (form.htmlId
+                          ? "HTML 已保存 · 可替换"
+                          : "上传 HTML 文件")}
+                    </strong>
+                    <small>点击选择或在此粘贴 HTML · 最大 5MB</small>
+                    <input
+                      type="file"
+                      accept=".html,.htm,text/html"
+                      aria-label="上传 HTML 作品"
+                      onChange={(e) => {
+                        const f = e.target.files?.[0];
+                        if (f) void selectFile(f, "html");
                         e.target.value = "";
-                        return;
-                      }
-                      setHtml(f || null);
-                    }}
-                  />
-                </label>
+                      }}
+                    />
+                  </label>
+                  <p className="help" aria-live="polite">
+                    {transfers.html
+                      ? `上传 HTML ${transfers.html}`
+                      : failed.html
+                        ? "HTML 上传失败，请重试。"
+                        : form.htmlId
+                          ? "HTML 已上传，保存和发布将复用该文件。"
+                          : "完整 HTML 源码或单个 .html / .htm 文件"}
+                  </p>
+                  <div className="upload-actions">
+                    <button
+                      className="button small"
+                      type="button"
+                      onClick={() => setPasteOpen(true)}
+                    >
+                      粘贴 HTML
+                    </button>
+                    {failed.html && html && (
+                      <button
+                        className="button small"
+                        type="button"
+                        onClick={() => void selectFile(html, "html")}
+                      >
+                        重试 HTML 上传
+                      </button>
+                    )}
+                  </div>
+                </div>
               </div>
               <p className="help">
                 提交 HTML 页面，百灵鸟使用内嵌 SVG
@@ -256,11 +570,21 @@ export function SubmitPage({
                 )}
               </div>
               <div className="form-actions">
-                <button className="button" type="submit" value="draft">
-                  保存草稿
+                <button
+                  className="button"
+                  type="submit"
+                  value="draft"
+                  disabled={uploading || failed.html || failed.cover}
+                >
+                  {published ? "保存更改" : "保存草稿"}
                 </button>
-                <button className="button primary" type="submit" value="submit">
-                  {busy ? "正在处理…" : "提交审核"}
+                <button
+                  className="button primary"
+                  type="submit"
+                  value="submit"
+                  disabled={uploading || failed.html || failed.cover}
+                >
+                  {busy ? "正在处理…" : "发布作品"}
                   <ArrowUpRight size={18} />
                 </button>
               </div>
@@ -283,11 +607,11 @@ export function SubmitPage({
             </div>
             <div>
               <Check size={18} />
-              <p>审核通过后自动进入作品展区。</p>
+              <p>作品发布后直接进入展区。</p>
             </div>
             <div>
               <Check size={18} />
-              <p>修改已公开的作品后，需要重新提交审核。</p>
+              <p>介绍、模型与封面可选填，HTML 自动生成封面。</p>
             </div>
             <span className="guide-note">CREATE SOMETHING ONLY YOU CAN.</span>
           </aside>
@@ -300,7 +624,7 @@ export function SubmitPage({
         >
           <div className="prose">
             <p>
-              提交后作品将进入审核。请确认你有权发布该作品，且文件不依赖外部网络。
+              发布后作品将直接进入展区。请确认你有权发布该作品，且文件不依赖外部网络。
             </p>
             <div className="form-actions">
               <button
@@ -315,9 +639,44 @@ export function SubmitPage({
                 disabled={busy}
                 onClick={() => void save(true)}
               >
-                {busy ? progress || "提交中…" : "确认提交"}
+                {busy ? progress || "发布中…" : "确认发布"}
               </button>
             </div>
+          </div>
+        </Modal>
+      )}
+      {pasteOpen && (
+        <Modal title="粘贴 HTML 源码" wide onClose={() => setPasteOpen(false)}>
+          <div className="form">
+            <label>
+              完整 HTML 页面
+              <textarea
+                className="html-source-input"
+                rows={12}
+                value={source}
+                onChange={(e) => setSource(e.target.value)}
+                placeholder="<!doctype html>…"
+                autoFocus
+              />
+            </label>
+            <p className="help">最大 5MB，需包含内嵌 SVG 图形。</p>
+            <button
+              className="button primary"
+              disabled={!source.trim()}
+              onClick={() => {
+                try {
+                  const file = htmlFile(source);
+                  setPasteOpen(false);
+                  setSource("");
+                  void selectFile(file, "html");
+                } catch (e) {
+                  setError((e as Error).message);
+                  setPasteOpen(false);
+                }
+              }}
+            >
+              使用这份 HTML
+            </button>
           </div>
         </Modal>
       )}
@@ -348,7 +707,7 @@ export function MyWorks({
     setBusy(true);
     try {
       await send(`/works/${w.id}/${type}`);
-      notify(type === "withdraw" ? "作品已撤回" : "作品已提交审核");
+      notify(type === "withdraw" ? "作品已撤回" : "作品已发布");
       setWithdraw(null);
       setRefresh((n) => n + 1);
     } catch (e) {
@@ -407,7 +766,7 @@ export function MyWorks({
                   HTML + SVG · 版本 {w.version} · {w.votes} 票
                 </p>
                 {w.reason && (
-                  <p className="review-reason">审核反馈：{w.reason}</p>
+                  <p className="review-reason">管理反馈：{w.reason}</p>
                 )}
               </div>
               <div className="my-actions">
@@ -419,17 +778,17 @@ export function MyWorks({
                   <Pencil size={15} />
                   编辑
                 </a>
-                {["draft", "rejected", "withdrawn"].includes(w.status) && (
+                {["draft", "withdrawn"].includes(w.status) && (
                   <button
                     className="button small primary"
                     disabled={busy}
                     onClick={() => void action(w, "submit")}
                   >
                     <Send size={15} />
-                    提交
+                    发布
                   </button>
                 )}
-                {["pending", "approved"].includes(w.status) && (
+                {w.status === "approved" && (
                   <button
                     className="button small"
                     disabled={busy}

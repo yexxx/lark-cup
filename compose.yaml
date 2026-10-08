@@ -10,7 +10,18 @@ services:
       POSTGRES_DB: lark
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
     volumes: ["postgres:/var/lib/postgresql/data"]
-    command: ["postgres", "-c", "max_connections=40", "-c", "shared_buffers=256MB", "-c", "work_mem=4MB", "-c", "statement_timeout=10000"]
+    command:
+      [
+        "postgres",
+        "-c",
+        "max_connections=40",
+        "-c",
+        "shared_buffers=256MB",
+        "-c",
+        "work_mem=4MB",
+        "-c",
+        "statement_timeout=10000",
+      ]
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U lark -d lark"]
       interval: 10s
@@ -22,7 +33,18 @@ services:
     logging: *logs
   redis:
     image: redis:7-alpine
-    command: ["redis-server", "--maxmemory", "192mb", "--maxmemory-policy", "volatile-lru", "--appendonly", "yes", "--appendfsync", "everysec"]
+    command:
+      [
+        "redis-server",
+        "--maxmemory",
+        "192mb",
+        "--maxmemory-policy",
+        "volatile-lru",
+        "--appendonly",
+        "yes",
+        "--appendfsync",
+        "everysec",
+      ]
     volumes: ["redis:/data"]
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
@@ -42,12 +64,20 @@ services:
       REDIS_URL: redis://redis:6379
       UPLOAD_DIR: /app/data/uploads
       TRUST_PROXY: "true"
+      COVER_RENDERER_URL: http://renderer:3003
+    networks: [default, renderer]
     volumes: ["uploads:/app/data/uploads"]
     depends_on:
       db: { condition: service_healthy }
       redis: { condition: service_healthy }
     healthcheck:
-      test: ["CMD", "node", "-e", "fetch('http://localhost:3001/api/v1/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://localhost:3001/api/v1/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
       interval: 20s
       timeout: 5s
       retries: 5
@@ -56,6 +86,22 @@ services:
     cpus: 1.5
     pids_limit: 100
     stop_grace_period: 30s
+    restart: unless-stopped
+    logging: *logs
+  renderer:
+    build: { context: ., target: renderer }
+    networks: [renderer]
+    init: true
+    read_only: true
+    tmpfs: ["/tmp:size=256m,mode=1777"]
+    shm_size: 256mb
+    security_opt:
+      ["no-new-privileges:true", "seccomp=./deploy/chromium-seccomp.json"]
+    cap_drop: [ALL]
+    cap_add: [SYS_CHROOT]
+    mem_limit: 768m
+    cpus: 1
+    pids_limit: 256
     restart: unless-stopped
     logging: *logs
   web:
@@ -71,3 +117,6 @@ volumes:
   postgres:
   redis:
   uploads:
+networks:
+  renderer:
+    internal: true

@@ -5,6 +5,19 @@ export class Cache {
   private local = new Map<string, { value: string; until: number }>();
   private rates = new Map<string, { value: number; until: number }>();
   private pending = new Map<string, Promise<any>>();
+  private publicRevision = 0;
+  async publicVersion() {
+    return this.redis
+      ? Number(
+          (await this.available(() => this.redis!.get("public:revision"))) || 0,
+        )
+      : this.publicRevision;
+  }
+  async invalidatePublic() {
+    if (this.redis)
+      await this.available(() => this.redis!.incr("public:revision"));
+    else this.publicRevision++;
+  }
   private async available<T>(operation: () => Promise<T>): Promise<T> {
     try {
       return await operation();

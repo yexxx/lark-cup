@@ -1185,6 +1185,39 @@ fieldset {
   outline: 3px solid #b88921;
   outline-offset: 3px;
 }
+.upload-box:focus-visible {
+  outline: 3px solid #b88921;
+  outline-offset: 3px;
+}
+.upload-column {
+  min-width: 0;
+}
+.upload-column .upload-box {
+  flex-direction: column;
+}
+.upload-column .upload-cover-preview {
+  width: 100%;
+  max-height: 200px;
+  object-fit: contain;
+}
+.upload-column .help {
+  min-height: 32px;
+  margin: 10px 0;
+}
+.upload-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.form .optional-label {
+  display: inline;
+  font-weight: normal;
+  margin-left: 6px;
+}
+.html-source-input {
+  font-family: ui-monospace, monospace;
+  font-size: 13px;
+}
 .help {
   font-size: 12px;
   color: var(--muted);

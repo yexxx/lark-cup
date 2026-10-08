@@ -20,7 +20,7 @@
 | GET  | `/works/:id`     | 详情；含可用时的 previewUrl；非公开作品仅本人和管理员可读                            |
 | GET  | `/leaderboard`   | `page,size`；返回同票同名次、更新时间                                                |
 
-列表统一返回 `{items,total,pages}`，页大小最大 48。作品字段包含 `id,number,title,description,model,prompt,status,version,coverId,htmlId,coverUrl,votes,recommended`。评选结束前公开接口不返回作者 ID。
+列表统一返回 `{items,total,pages}`，页大小最大 48。作品字段包含 `id,number,title,description,model,prompt,status,version,coverId,htmlId,coverUrl,coverMode,coverStatus,votes,recommended`。评选结束前公开接口不返回作者 ID。
 
 ## 认证约定
 
@@ -34,16 +34,16 @@
 
 ## 参赛与投票
 
-| 方法 | 路径                  | 说明                                                                    |
-| ---- | --------------------- | ----------------------------------------------------------------------- |
-| POST | `/uploads`            | multipart 单个 file，HTML 或封面，返回 `{id,kind,bytes}`                |
-| POST | `/works`              | 创建草稿                                                                |
-| PUT  | `/works/:id`          | 编辑；必须携带最新 version，成功后变为 draft                            |
-| POST | `/works/:id/submit`   | 需封面和 HTML，draft/rejected/withdrawn → pending                       |
-| POST | `/works/:id/withdraw` | 本人撤回，已有票数保留                                                  |
-| GET  | `/me/works`           | 本人作品和审核反馈                                                      |
-| GET  | `/me/quota`           | 当日额度 limit、已使用票数 classic（历史内部字段名）、已投作品 votedIds |
-| POST | `/works/:id/votes`    | 必填请求头 `Idempotency-Key: UUID`，无请求体                            |
+| 方法 | 路径                  | 说明                                                                        |
+| ---- | --------------------- | --------------------------------------------------------------------------- |
+| POST | `/uploads`            | multipart 单个 file，HTML 或封面，返回 `{id,kind,bytes,autoCover?}`         |
+| POST | `/works`              | 创建草稿                                                                    |
+| PUT  | `/works/:id`          | 编辑；必须携带最新 version，公开作品编辑后保持 approved，草稿编辑后为 draft |
+| POST | `/works/:id/submit`   | 需 HTML，补齐自动封面，draft/withdrawn → approved；重复发布幂等             |
+| POST | `/works/:id/withdraw` | 本人撤回，已有票数保留                                                      |
+| GET  | `/me/works`           | 本人作品和管理反馈                                                          |
+| GET  | `/me/quota`           | 当日额度 limit、已使用票数 classic（历史内部字段名）、已投作品 votedIds     |
+| POST | `/works/:id/votes`    | 必填请求头 `Idempotency-Key: UUID`，无请求体                                |
 
 创建和编辑请求：
 
@@ -59,26 +59,33 @@
 }
 ```
 
-`version` 仅编辑必填。服务端始终使用赛事固定提示词，客户端不能覆盖。`track` 可省略；仅接受内部历史键 `classic`。草稿可暂缺文件，正式提交必须补齐。
+`version` 仅编辑必填。服务端始终使用赛事固定提示词，客户端不能覆盖。`track` 可省略；仅接受内部历史键 `classic`。介绍、模型可省略或为空字符串，服务端统一保存为空字符串。`coverId` 可省略或为 null，提供 HTML 时补齐自动封面；`coverMode` 可选 auto/manual，自动封面随 HTML 更新、手动封面保留。草稿可暂缺文件，正式发布需 HTML。作品发布后直接公开，公开作品编辑后继续展示。现有待审核作品迁移为公开，历史退回作品迁移为草稿。
 
 投票返回 `{id,repeated}`。同一用户同一幂等键重试返回原记录；同一键用于其他作品返回 409。记录唯一约束还禁止同一用户同一天对同一作品重复投票。作废票不释放额度，也不允许重新投同一作品。
 
+HTML 上传返回 `autoCover: {id,url,status}`，status 为 pending/ready/fallback，初始占位封面可直接用于投稿。
+
+pending 包括排队、截图及暂时不可用时的退避重试；ready 表示截图完成；同一内容连续 3 次渲染失败后进入 fallback，作者可重新生成或上传图片。
+
+- `GET /uploads/:htmlId/cover`：查询本人上传 HTML 的自动封面，其他用户返回 404；前端 pending 状态每 2 秒查询。
+- `POST /uploads/:htmlId/cover/retry`：本人重新生成，按用户每分钟最多 10 次。旧 HTML 首次切换自动封面时创建生成任务。
+- 作品响应包含 `coverMode`（auto/manual）、`coverStatus` 和带修订号的 `coverUrl`；自动补图保留封面 ID，URL 随图片修订更新。
+
 ## 管理员
 
-| 方法  | 路径                      | 请求／行为                                                        |
-| ----- | ------------------------- | ----------------------------------------------------------------- |
-| GET   | `/admin/overview`         | 数量统计、动态请求和上传占用、进程内存和 CPU 累计值               |
-| GET   | `/admin/works`            | `status=all/pending/approved/rejected/draft/withdrawn` 与分页     |
-| POST  | `/admin/works/:id/review` | `{decision:approved/rejected,reason,version}`；仅审核待审最新版本 |
-| PATCH | `/admin/works/:id`        | `{recommended}` 或 `{withdraw:true,reason}`                       |
-| PUT   | `/admin/competition`      | 完整赛事设置；dailyLimit 次日生效                                 |
-| GET   | `/admin/users`            | 用户列表与分页                                                    |
-| PATCH | `/admin/users/:id`        | `{status:active/disabled}`                                        |
-| GET   | `/admin/votes`            | 投票明细与分页                                                    |
-| POST  | `/admin/votes/:id/void`   | `{reason}`，不可重复作废                                          |
-| GET   | `/admin/audit`            | 管理员操作审计与分页                                              |
-| GET   | `/admin/export/works`     | 流式 CSV 导出报名数据                                             |
-| GET   | `/admin/export/votes`     | 流式 CSV 导出票据                                                 |
+| 方法  | 路径                    | 请求／行为                                          |
+| ----- | ----------------------- | --------------------------------------------------- |
+| GET   | `/admin/overview`       | 数量统计、动态请求和上传占用、进程内存和 CPU 累计值 |
+| GET   | `/admin/works`          | `status=all/approved/draft/withdrawn` 与分页        |
+| PATCH | `/admin/works/:id`      | `{recommended}` 或 `{withdraw:true,reason}`         |
+| PUT   | `/admin/competition`    | 完整赛事设置；dailyLimit 次日生效                   |
+| GET   | `/admin/users`          | 用户列表与分页                                      |
+| PATCH | `/admin/users/:id`      | `{status:active/disabled}`                          |
+| GET   | `/admin/votes`          | 投票明细与分页                                      |
+| POST  | `/admin/votes/:id/void` | `{reason}`，不可重复作废                            |
+| GET   | `/admin/audit`          | 管理员操作审计与分页                                |
+| GET   | `/admin/export/works`   | 流式 CSV 导出报名数据                               |
+| GET   | `/admin/export/votes`   | 流式 CSV 导出票据                                   |
 
 所有管理接口经数据库角色检查。管理员通过服务器交互命令创建。用户列表同时返回 `username` 和稳定的用户 `id`；停用用户会撤销其全部会话，重新启用后需重新登录。
 

@@ -15,12 +15,13 @@ export const nextDay = (date = new Date()) =>
 export const trackSchema = z.literal("classic").default("classic");
 export const workSchema = z.object({
   title: z.string().trim().min(1).max(80),
-  description: z.string().trim().min(1).max(3000),
-  model: z.string().trim().min(1).max(100),
+  description: z.string().trim().max(3000).default(""),
+  model: z.string().trim().max(100).default(""),
   prompt: z.string().trim().min(1).max(10000),
   track: trackSchema,
-  coverId: z.uuid().nullable(),
-  htmlId: z.uuid().nullable(),
+  coverId: z.uuid().nullable().default(null),
+  htmlId: z.uuid().nullable().default(null),
+  coverMode: z.enum(["auto", "manual"]).optional(),
 });
 export const settingsSchema = z
   .object({

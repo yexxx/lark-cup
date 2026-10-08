@@ -406,7 +406,7 @@ await check(
   },
 );
 await check(
-  "real submission, owner isolation, optimistic editing, and review race",
+  "real publication, owner isolation, optimistic editing, and publish race",
   async () => {
     const body = {
       title: "Load lifecycle",
@@ -437,18 +437,17 @@ await check(
       (await call(`/api/v1/works/${workId}/submit`, author, "POST")).status,
       200,
     );
-    const reviews = await Promise.all(
+    const publications = await Promise.all(
       Array.from({ length: 2 }, () =>
-        call(`/api/v1/admin/works/${workId}/review`, admin, "POST", {
-          decision: "approved",
-          reason: "",
-          version: 2,
-        }),
+        call(`/api/v1/works/${workId}/submit`, author, "POST"),
       ),
     );
-    assert.deepEqual(reviews.map((r) => r.status).sort(), [200, 409]);
+    assert.deepEqual(
+      publications.map((r) => r.status),
+      [200, 200],
+    );
     const r = await pool.query(
-      "SELECT count(*)::integer AS n FROM reviews WHERE work_id=$1",
+      "SELECT count(*)::integer AS n FROM audit_logs WHERE action='work.publish' AND target=$1",
       [workId],
     );
     assert.equal(r.rows[0].n, 1);
@@ -458,17 +457,17 @@ await check(
     );
     return {
       editCodes: edits.map((r) => r.status),
-      reviewCodes: reviews.map((r) => r.status),
+      publishCodes: publications.map((r) => r.status),
     };
   },
 );
 await check(
-  "editing competes with review while the current version remains private",
+  "published editing competes with publication and remains public",
   async () => {
     const body = {
-      title: "Concurrent review",
-      description: "Load",
-      model: "Load",
+      title: "Concurrent publication",
+      description: "",
+      model: "",
       prompt: "SVG",
       coverId,
       htmlId,
@@ -480,53 +479,30 @@ await check(
       (await call(`/api/v1/works/${id}/submit`, author, "POST")).status,
       200,
     );
-    const [edit, review] = await Promise.all([
+    const [edit, publication] = await Promise.all([
       call(`/api/v1/works/${id}`, author, "PUT", {
         ...body,
-        title: "Updated while reviewing",
+        title: "Updated published work",
         version: 1,
       }),
-      call(`/api/v1/admin/works/${id}/review`, admin, "POST", {
-        decision: "approved",
-        reason: "",
-        version: 1,
-      }),
+      call(`/api/v1/works/${id}/submit`, author, "POST"),
     ]);
     assert.equal(edit.status, 200);
-    assert([200, 409].includes(review.status));
+    assert.equal(publication.status, 200);
     const state = (
       await pool.query("SELECT version,status,title FROM works WHERE id=$1", [
         id,
       ])
     ).rows[0];
     assert.equal(state.version, 2);
-    assert.equal(state.status, "draft");
-    assert.equal(state.title, "Updated while reviewing");
-    assert.equal((await call(`/api/v1/works/${id}`)).status, 404);
-    assert.equal(
-      (
-        await call(`/api/v1/admin/works/${id}/review`, admin, "POST", {
-          decision: "approved",
-          reason: "",
-          version: 1,
-        })
-      ).status,
-      409,
-    );
-    const count = Number(
-      (
-        await pool.query("SELECT count(*) AS n FROM reviews WHERE work_id=$1", [
-          id,
-        ])
-      ).rows[0].n,
-    );
-    assert.equal(count, review.status === 200 ? 1 : 0);
+    assert.equal(state.status, "approved");
+    assert.equal(state.title, "Updated published work");
+    assert.equal((await call(`/api/v1/works/${id}`)).status, 200);
     return {
       edit: edit.status,
-      review: review.status,
+      publication: publication.status,
       currentVersion: 2,
-      currentStatus: "draft",
-      historicalReviews: count,
+      currentStatus: "approved",
     };
   },
 );
@@ -553,17 +529,6 @@ await check(
     assert.equal(
       (await call(`/api/v1/works/${created.data.id}/submit`, other, "POST"))
         .status,
-      200,
-    );
-    assert.equal(
-      (
-        await call(
-          `/api/v1/admin/works/${created.data.id}/review`,
-          admin,
-          "POST",
-          { decision: "approved", reason: "", version: 1 },
-        )
-      ).status,
       200,
     );
     const { stdout } = await promisify(execFile)(
@@ -982,7 +947,7 @@ await check(
   async () => {
     const changes = (
       await pool.query(
-        "SELECT action,target,count(*)::integer AS n FROM audit_logs WHERE action IN ('account.create','account.password.change','user.status','review','vote.void') GROUP BY action,target",
+        "SELECT action,target,count(*)::integer AS n FROM audit_logs WHERE action IN ('account.create','account.password.change','user.status','work.publish','vote.void') GROUP BY action,target",
       )
     ).rows;
     assert(
@@ -1007,12 +972,12 @@ await check(
     );
     assert(
       changes.some(
-        (r) => r.action === "review" && r.target === workId && r.n === 1,
+        (r) => r.action === "work.publish" && r.target === workId && r.n === 1,
       ),
     );
     return {
       checkedActions: 5,
-      reviewAuditCount: 1,
+      publishAuditCount: 1,
       disableAndEnableAuditCount: 2,
     };
   },

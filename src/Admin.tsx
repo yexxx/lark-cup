@@ -16,7 +16,7 @@ import type { User } from "./auth";
 import { type Competition, type Work, statusNames } from "./types";
 import { ErrorBox, Loading, Modal, Pagination } from "./ui";
 const sections = [
-  ["works", "作品审核", CheckCheck],
+  ["works", "作品管理", CheckCheck],
   ["settings", "活动设置", Settings2],
   ["users", "用户管理", Users],
   ["votes", "投票记录", Heart],
@@ -39,7 +39,7 @@ export function Admin({
   const [data, setData] = useState<any>(null);
   const [overview, setOverview] = useState<any>(null);
   const [page, setPage] = useState(1);
-  const [status, setStatus] = useState("pending");
+  const [status, setStatus] = useState("all");
   const [refresh, setRefresh] = useState(0);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -111,7 +111,7 @@ export function Admin({
         <>
           <div className="admin-stats">
             {[
-              ["待审核", overview?.pending],
+              ["公开作品", overview?.published],
               ["全部作品", overview?.works],
               ["有效投票", overview?.votes],
               ["注册身份", overview?.users],
@@ -147,6 +147,12 @@ export function Admin({
                   {overview?.maxUploads ?? 2}
                   <br />
                   进程内存 {overview?.memoryMB ?? "—"} MB
+                  <br />
+                  封面待生成 {overview?.covers?.pending ?? 0} · 处理中{" "}
+                  {overview?.covers?.active ?? 0}
+                  <br />
+                  已生成 {overview?.covers?.ready ?? 0} · 占位封面{" "}
+                  {overview?.covers?.fallback ?? 0}
                 </p>
               </div>
             </aside>
@@ -223,48 +229,11 @@ export function Admin({
                                   预览
                                 </a>
                               </div>
-                              <p>{w.description}</p>
+                              {w.description && <p>{w.description}</p>}
                               {w.reason && (
                                 <p className="review-reason">{w.reason}</p>
                               )}
                               <div className="review-actions">
-                                {w.status === "pending" && (
-                                  <>
-                                    <button
-                                      className="button primary small"
-                                      disabled={busy}
-                                      onClick={() =>
-                                        setDialog({
-                                          title: `通过「${w.title}」？`,
-                                          url: `/admin/works/${w.id}/review`,
-                                          body: {
-                                            decision: "approved",
-                                            version: w.version,
-                                            reason: "",
-                                          },
-                                        })
-                                      }
-                                    >
-                                      审核通过
-                                    </button>
-                                    <button
-                                      className="button small"
-                                      onClick={() =>
-                                        setDialog({
-                                          title: "填写驳回原因",
-                                          url: `/admin/works/${w.id}/review`,
-                                          body: {
-                                            decision: "rejected",
-                                            version: w.version,
-                                          },
-                                          reason: true,
-                                        })
-                                      }
-                                    >
-                                      驳回修改
-                                    </button>
-                                  </>
-                                )}
                                 {w.status === "approved" && (
                                   <>
                                     <button

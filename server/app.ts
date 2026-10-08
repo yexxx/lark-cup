@@ -8,6 +8,13 @@ import { Readable } from "node:stream";
 import path from "node:path";
 import sharp from "sharp";
 import { validateHtmlUpload } from "./html-upload.js";
+import {
+  CoverService,
+  coverUrl,
+  type AutoCover,
+  type CoverRenderer,
+} from "./covers.js";
+import { previewPolicy } from "./preview-policy.js";
 import type { DB } from "./db.js";
 import { Cache } from "./cache.js";
 import { config } from "./config.js";
@@ -39,8 +46,9 @@ const pagination = z.object({
   sort: z.enum(["recommended", "latest", "votes"]).default("recommended"),
   q: z.string().trim().max(80).default(""),
 });
-const counted = `SELECT w.*, COALESCE(v.total,0)::integer AS votes FROM works w LEFT JOIN (SELECT work_id, count(*) AS total FROM votes WHERE valid GROUP BY work_id) v ON v.work_id=w.id`;
-const targeted = `SELECT w.*, (SELECT count(*)::integer FROM votes v WHERE v.work_id=w.id AND v.valid) AS votes FROM works w`;
+const coverFields = `(SELECT revision FROM assets WHERE id=w.cover_id) AS cover_revision,(SELECT status FROM generated_covers WHERE cover_id=w.cover_id) AS cover_status`;
+const counted = `SELECT w.*, ${coverFields}, COALESCE(v.total,0)::integer AS votes FROM works w LEFT JOIN (SELECT work_id, count(*) AS total FROM votes WHERE valid GROUP BY work_id) v ON v.work_id=w.id`;
+const targeted = `SELECT w.*, ${coverFields}, (SELECT count(*)::integer FROM votes v WHERE v.work_id=w.id AND v.valid) AS votes FROM works w`;
 const selectFields = (w: any, reveal = false) => ({
   id: w.id,
   number: Number(w.number),
@@ -56,7 +64,10 @@ const selectFields = (w: any, reveal = false) => ({
   votes: Number(w.votes || 0),
   coverId: w.cover_id,
   htmlId: w.html_id,
-  coverUrl: w.cover_id ? `/media/${w.cover_id}` : null,
+  coverUrl: w.cover_id ? coverUrl(w.cover_id, w.cover_revision || 1) : null,
+  coverMode: w.cover_status ? "auto" : w.cover_id ? "manual" : "auto",
+  coverStatus:
+    w.cover_status === "rendering" ? "pending" : w.cover_status || null,
   createdAt: w.created_at,
   updatedAt: w.updated_at,
   ...(reveal ? { ownerId: w.owner_id } : {}),
@@ -70,6 +81,8 @@ export async function buildApp(
     logger?: boolean;
     uploads?: string;
     now?: () => Date;
+    coverRenderer?: CoverRenderer;
+    startCoverWorker?: boolean;
   } = {},
 ) {
   const app = Fastify({
@@ -104,6 +117,16 @@ export async function buildApp(
   const previewSecret = process.env.PREVIEW_SECRET || randomUUID();
   await mkdir(uploads, { recursive: true });
   await cache.ready();
+  const covers = new CoverService(
+    db,
+    uploads,
+    options.coverRenderer,
+    (error) => app.log.error(error, "Cover task failed"),
+    undefined,
+    () => cache.invalidatePublic(),
+  );
+  if (options.startCoverWorker !== false) covers.start();
+  app.addHook("onClose", async () => covers.stop());
   const sessionCleanup = setInterval(() => {
     void cleanupSessions(db, clock()).catch((error) =>
       app.log.error(error, "Session cleanup failed"),
@@ -253,12 +276,69 @@ export async function buildApp(
       id &&
       !(
         await tx.query(
-          "SELECT id FROM assets WHERE id=$1 AND owner_id=$2 AND kind=$3",
+          "SELECT id FROM assets WHERE id=$1 AND owner_id=$2 AND kind=$3 FOR UPDATE",
           [id, user, kind],
         )
       ).rows.length
     )
       fail(400, "文件不存在或不属于当前用户");
+  }
+  async function completeCover(
+    tx: DB,
+    b: {
+      htmlId: string | null;
+      coverId: string | null;
+      coverMode?: "auto" | "manual";
+    },
+    owner: string,
+  ) {
+    await assetOwnership(tx, b.htmlId, owner, "html");
+    await assetOwnership(tx, b.coverId, owner, "cover");
+    const generated =
+      b.coverId &&
+      (
+        await tx.query(
+          "SELECT html_id FROM generated_covers WHERE cover_id=$1",
+          [b.coverId],
+        )
+      ).rows[0];
+    if (
+      b.htmlId &&
+      (b.coverMode === "auto" ||
+        !b.coverId ||
+        (b.coverMode !== "manual" && generated))
+    )
+      b.coverId = (await covers.ensure(b.htmlId, owner, tx)).id;
+    else if (b.coverMode === "auto") b.coverId = null;
+  }
+  async function fileTransaction<T>(fn: (tx: DB) => Promise<T>) {
+    const provisional: string[] = [];
+    try {
+      return await db.transaction(async (tx) => {
+        const guarded: DB = {
+          ...tx,
+          query: async (sql, args) => {
+            const result = await tx.query(sql, args);
+            if (sql.startsWith("INSERT INTO generated_covers") && args)
+              provisional.push(args[1]);
+            return result;
+          },
+        };
+        return fn(guarded);
+      });
+    } catch (error) {
+      for (const id of provisional)
+        await covers
+          .removeUncommitted(id)
+          .catch((cleanup) => app.log.error(cleanup));
+      throw error;
+    }
+  }
+  async function workResult(tx: DB, id: string) {
+    return selectFields(
+      (await tx.query(`${targeted} WHERE w.id=$1`, [id])).rows[0],
+      true,
+    );
   }
   function privateToken(id: string, expiry: number) {
     return createHmac("sha256", previewSecret)
@@ -299,7 +379,7 @@ export async function buildApp(
   });
   app.get("/api/v1/stats", async () =>
     cache.cached(
-      "stats",
+      `stats:${await cache.publicVersion()}`,
       config.listTtl,
       async () =>
         (
@@ -312,7 +392,7 @@ export async function buildApp(
   app.get("/api/v1/works", async (req) => {
     const p = pagination.parse(req.query);
     return cache.cached(
-      `works:${JSON.stringify(p)}`,
+      `works:${await cache.publicVersion()}:${JSON.stringify(p)}`,
       config.listTtl,
       async () => {
         const args = [p.track, `%${p.q.replace(/[\\%_]/g, "\\$&")}%`];
@@ -346,7 +426,7 @@ export async function buildApp(
   app.get("/api/v1/leaderboard", async (req) => {
     const p = pagination.parse(req.query);
     return cache.cached(
-      `rank:${p.track}:${p.page}:${p.size}`,
+      `rank:${await cache.publicVersion()}:${p.track}:${p.page}:${p.size}`,
       config.rankTtl,
       async () => {
         const rows = (
@@ -441,12 +521,17 @@ export async function buildApp(
         .send({ message: "上传队列繁忙，请稍后再试" });
     activeUploads++;
     uploading.add(req);
-    const part = await req.file();
-    if (!part) fail(400, "请选择文件");
-    let data = await part.toBuffer();
-    if (part.file.truncated) fail(413, "HTML 最大 5MB");
+    let filenameInput = "",
+      data: Buffer | undefined;
+    for await (const part of req.parts()) {
+      if (part.type !== "file" || data) fail(400, "每次请上传一个文件");
+      filenameInput = part.filename;
+      data = await part.toBuffer();
+      if (part.file.truncated) fail(413, "HTML 最大 5MB");
+    }
+    if (!data) fail(400, "请选择文件");
     let kind: string, mime: string, extension: string;
-    if (/\.html?$/i.test(part.filename)) {
+    if (/\.html?$/i.test(filenameInput)) {
       await validateHtmlUpload(data);
       kind = "html";
       mime = "text/html";
@@ -479,21 +564,57 @@ export async function buildApp(
     const id = randomUUID();
     const filename = `${id}.${extension}`;
     const destination = path.join(uploads, filename);
+    let autoCover: AutoCover | undefined;
     try {
       await writeFile(destination, data, { flag: "wx" });
-      await db.query(
-        "INSERT INTO assets(id,owner_id,kind,filename,mime,bytes) VALUES($1,$2,$3,$4,$5,$6)",
-        [id, user.id, kind, filename, mime, data.length],
-      );
+      await db.transaction(async (tx) => {
+        await tx.query(
+          "INSERT INTO assets(id,owner_id,kind,filename,mime,bytes,managed) VALUES($1,$2,$3,$4,$5,$6,true)",
+          [id, user.id, kind, filename, mime, data.length],
+        );
+        if (kind === "html") autoCover = await covers.ensure(id, user.id, tx);
+      });
     } catch (e: any) {
       if (e.code !== "EEXIST")
         await unlink(destination).catch((cleanupError) => {
           if (cleanupError.code !== "ENOENT")
             req.log.error(cleanupError, "Upload cleanup failed");
         });
-      throw e;
+      if (autoCover)
+        await unlink(path.join(uploads, `${autoCover.id}.webp`)).catch(
+          () => {},
+        );
+      req.log.error(e, "Upload persistence failed");
+      return reply
+        .code(503)
+        .header("Retry-After", "2")
+        .send({
+          message:
+            e.code === "ENOSPC"
+              ? "上传存储空间不足，请稍后重试"
+              : "上传素材保存失败，请稍后重试",
+          requestId: req.id,
+        });
     }
-    return { id, kind, bytes: data.length };
+    if (options.startCoverWorker !== false) covers.kick();
+    return {
+      id,
+      kind,
+      bytes: data.length,
+      ...(autoCover ? { autoCover } : {}),
+    };
+  });
+  app.get("/api/v1/uploads/:id/cover", async (req) => {
+    const user = await identify(req);
+    const cover = await covers.status(uuid((req.params as any).id), user.id);
+    if (!cover) fail(404, "自动封面不存在");
+    return cover;
+  });
+  app.post("/api/v1/uploads/:id/cover/retry", async (req) => {
+    const user = await identify(req);
+    if (!(await cache.take(`cover-retry:${user.id}`, 10)))
+      fail(429, "重新生成过于频繁，请稍后再试");
+    return covers.retry(uuid((req.params as any).id), user.id);
   });
   app.post("/api/v1/works", async (req) => {
     const user = await identify(req);
@@ -502,9 +623,8 @@ export async function buildApp(
     checkWindow(competition, "submission", clock());
     b.prompt = competition.prompt;
     const id = randomUUID();
-    return db.transaction(async (tx) => {
-      await assetOwnership(tx, b.coverId, user.id, "cover");
-      await assetOwnership(tx, b.htmlId, user.id, "html");
+    return fileTransaction(async (tx) => {
+      await completeCover(tx, b, user.id);
       const w = (
         await tx.query(
           "INSERT INTO works(id,owner_id,track,title,description,model,prompt,cover_id,html_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *",
@@ -525,7 +645,7 @@ export async function buildApp(
         "INSERT INTO work_versions(work_id,version,snapshot) VALUES($1,1,$2)",
         [id, JSON.stringify(w)],
       );
-      return selectFields(w, true);
+      return workResult(tx, w.id);
     });
   });
   app.put("/api/v1/works/:id", async (req) => {
@@ -537,7 +657,7 @@ export async function buildApp(
     const competition = await settings(db);
     checkWindow(competition, "submission", clock());
     b.prompt = competition.prompt;
-    return db.transaction(async (tx) => {
+    const result = await fileTransaction(async (tx) => {
       const w = (
         await tx.query(
           "SELECT * FROM works WHERE id=$1 AND owner_id=$2 FOR UPDATE",
@@ -552,11 +672,12 @@ export async function buildApp(
           .rows.length
       )
         fail(409, "已有投票的作品不能更换赛道");
-      await assetOwnership(tx, b.coverId, user.id, "cover");
-      await assetOwnership(tx, b.htmlId, user.id, "html");
+      await completeCover(tx, b, user.id);
+      if (w.status === "approved" && !b.htmlId)
+        fail(409, "公开作品需要 HTML 文件");
       const result = (
         await tx.query(
-          "UPDATE works SET track=$2,title=$3,description=$4,model=$5,prompt=$6,cover_id=$7,html_id=$8,status='draft',reason='',recommended=false,version=version+1,updated_at=now() WHERE id=$1 RETURNING *",
+          "UPDATE works SET track=$2,title=$3,description=$4,model=$5,prompt=$6,cover_id=$7,html_id=$8,status=CASE WHEN status='approved' THEN 'approved' ELSE 'draft' END,reason='',version=version+1,updated_at=now() WHERE id=$1 RETURNING *",
           [
             id,
             b.track,
@@ -573,21 +694,37 @@ export async function buildApp(
         "INSERT INTO work_versions(work_id,version,snapshot) VALUES($1,$2,$3)",
         [id, result.version, JSON.stringify(result)],
       );
-      return selectFields(result, true);
+      return workResult(tx, result.id);
     });
+    await cache.invalidatePublic().catch((error) => req.log.error(error));
+    return result;
   });
   app.post("/api/v1/works/:id/submit", async (req) => {
     const id = uuid((req.params as any).id);
     const user = await identify(req);
     checkWindow(await settings(db), "submission", clock());
-    const w = (
-      await db.query(
-        "UPDATE works SET status='pending',reason='',updated_at=now() WHERE id=$1 AND owner_id=$2 AND status IN ('draft','rejected','withdrawn') AND html_id IS NOT NULL AND cover_id IS NOT NULL RETURNING *",
-        [id, user.id],
-      )
-    ).rows[0];
-    if (!w) fail(409, "请补齐 HTML 和封面，或检查作品是否已提交");
-    return selectFields(w, true);
+    const result = await fileTransaction(async (tx) => {
+      const w = (
+        await tx.query(
+          "SELECT * FROM works WHERE id=$1 AND owner_id=$2 FOR UPDATE",
+          [id, user.id],
+        )
+      ).rows[0];
+      if (!w) fail(404, "未找到你的作品");
+      if (!w.html_id) fail(409, "发布作品前，请上传 HTML 文件");
+      const files = { htmlId: w.html_id, coverId: w.cover_id };
+      await completeCover(tx, files, user.id);
+      await tx.query(
+        "UPDATE works SET status='approved',reason='',cover_id=$2,updated_at=now() WHERE id=$1",
+        [id, files.coverId],
+      );
+      if (w.status !== "approved")
+        await audit(tx, user.id, "work.publish", id, { version: w.version });
+      return workResult(tx, id);
+    });
+    await cache.invalidatePublic().catch((error) => req.log.error(error));
+    if (options.startCoverWorker !== false) covers.kick();
+    return result;
   });
   app.post("/api/v1/works/:id/withdraw", async (req) => {
     const id = uuid((req.params as any).id);
@@ -596,6 +733,7 @@ export async function buildApp(
       "UPDATE works SET status='withdrawn',recommended=false,updated_at=now() WHERE id=$1 AND owner_id=$2",
       [id, user.id],
     );
+    await cache.invalidatePublic().catch((error) => req.log.error(error));
     return { ok: true };
   });
   app.post("/api/v1/works/:id/votes", async (req) => {
@@ -650,10 +788,7 @@ export async function buildApp(
     _req.raw.once("aborted", disconnected);
     reply.raw.once("close", disconnected);
     reply
-      .header(
-        "Content-Security-Policy",
-        `default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval'; style-src 'unsafe-inline'; img-src data: blob:; font-src data:; media-src data: blob:; connect-src 'none'; frame-src 'none'; worker-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors ${config.appOrigin}; sandbox allow-scripts`,
-      )
+      .header("Content-Security-Policy", previewPolicy(config.appOrigin))
       .header("Referrer-Policy", "no-referrer")
       .header("X-Content-Type-Options", "nosniff")
       .header(
@@ -701,7 +836,7 @@ export async function buildApp(
     return {
       ...(
         await db.query(
-          "SELECT (SELECT count(*)::integer FROM works WHERE status='pending') AS pending,(SELECT count(*)::integer FROM users) AS users,(SELECT count(*)::integer FROM votes WHERE valid) AS votes,(SELECT count(*)::integer FROM works) AS works",
+          "SELECT (SELECT count(*)::integer FROM works WHERE status='approved') AS published,(SELECT count(*)::integer FROM users) AS users,(SELECT count(*)::integer FROM votes WHERE valid) AS votes,(SELECT count(*)::integer FROM works) AS works",
         )
       ).rows[0],
       inflight,
@@ -711,13 +846,14 @@ export async function buildApp(
       memoryMB: Math.round(process.memoryUsage().rss / 1024 / 1024),
       cpu: process.cpuUsage(),
       uptimeSeconds: process.uptime(),
+      covers: await covers.metrics(),
     };
   });
   app.get("/api/v1/admin/works", async (req) => {
     await identify(req, true);
     const p = pagination.parse(req.query);
     const state = z
-      .enum(["all", "pending", "approved", "rejected", "draft", "withdrawn"])
+      .enum(["all", "approved", "draft", "withdrawn"])
       .parse((req.query as any).status || "all");
     const rows = (
       await db.query(
@@ -739,36 +875,6 @@ export async function buildApp(
       pages: Math.max(1, Math.ceil(total / p.size)),
     };
   });
-  app.post("/api/v1/admin/works/:id/review", async (req) => {
-    const user = await identify(req, true);
-    const id = uuid((req.params as any).id);
-    const b = z
-      .object({
-        decision: z.enum(["approved", "rejected"]),
-        reason: z.string().trim().max(1000),
-        version: z.number().int(),
-      })
-      .parse(req.body);
-    if (b.decision === "rejected" && !b.reason) fail(400, "请填写驳回原因");
-    return db.transaction(async (tx) => {
-      const w = (
-        await tx.query("SELECT * FROM works WHERE id=$1 FOR UPDATE", [id])
-      ).rows[0];
-      if (!w) fail(404, "作品不存在");
-      if (w.status !== "pending" || w.version !== b.version)
-        fail(409, "作品状态或版本已改变，请刷新");
-      await tx.query(
-        "UPDATE works SET status=$2,reason=$3,updated_at=now() WHERE id=$1",
-        [id, b.decision, b.reason],
-      );
-      await tx.query(
-        "INSERT INTO reviews(work_id,actor_id,decision,reason,version) VALUES($1,$2,$3,$4,$5)",
-        [id, user.id, b.decision, b.reason, b.version],
-      );
-      await audit(tx, user.id, "review", id, b);
-      return { ok: true };
-    });
-  });
   app.patch("/api/v1/admin/works/:id", async (req) => {
     const user = await identify(req, true);
     const id = uuid((req.params as any).id);
@@ -779,7 +885,7 @@ export async function buildApp(
         reason: z.string().trim().max(1000).optional(),
       })
       .parse(req.body);
-    return db.transaction(async (tx) => {
+    const result = await db.transaction(async (tx) => {
       const w = (
         await tx.query("SELECT * FROM works WHERE id=$1 FOR UPDATE", [id])
       ).rows[0];
@@ -799,6 +905,8 @@ export async function buildApp(
       await audit(tx, user.id, "work.update", id, b);
       return { ok: true };
     });
+    await cache.invalidatePublic().catch((error) => req.log.error(error));
+    return result;
   });
   app.put("/api/v1/admin/competition", async (req) => {
     const user = await identify(req, true);
@@ -959,6 +1067,7 @@ export async function buildApp(
     app,
     preview,
     cache,
+    covers,
     metrics: () => ({ inflight, activeUploads, activePreviews, activeExports }),
     close: async () => {
       await app.close();

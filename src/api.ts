@@ -4,6 +4,13 @@ import {
   trackSession,
   reportSessionError,
 } from "./session";
+import type { AutoCover } from "./types";
+export type UploadResult = {
+  id: string;
+  kind: "html" | "cover";
+  bytes: number;
+  autoCover?: AutoCover;
+};
 let active = 0;
 type Waiter = {
   resolve: () => void;
@@ -137,11 +144,15 @@ export const send = (
 export async function upload(
   file: File,
   onProgress: (n: number) => void,
-): Promise<{ id: string; kind: string }> {
+  signal?: AbortSignal,
+): Promise<UploadResult> {
   const controller = new AbortController();
   const untrack = trackSession(controller);
   const version = sessionVersion();
   const id = sessionIdentity();
+  const externalAbort = () => controller.abort();
+  signal?.addEventListener("abort", externalAbort, { once: true });
+  if (signal?.aborted) controller.abort();
   let acquired = false;
   try {
     await permit(controller.signal);
@@ -194,8 +205,10 @@ export async function upload(
       const form = new FormData();
       form.append("file", file);
       xhr.send(form);
+      if (controller.signal.aborted) xhr.abort();
     });
   } finally {
+    signal?.removeEventListener("abort", externalAbort);
     untrack();
     if (acquired) release();
   }

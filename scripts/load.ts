@@ -307,16 +307,6 @@ async function action(
       { method: "POST" },
       user,
     );
-    await request(
-      `${base}/api/v1/admin/works/${created.data.id}/review`,
-      "write",
-      measured,
-      {
-        method: "POST",
-        ...json({ decision: "approved", reason: "", version: 1 }),
-      },
-      fixture.users[0],
-    );
   }
 }
 const delay = monitorEventLoopDelay({ resolution: 20 });

@@ -1,3 +1,8 @@
+export type AutoCover = {
+  id: string;
+  url: string;
+  status: "pending" | "ready" | "fallback";
+};
 export type Work = {
   id: string;
   number: number;
@@ -14,6 +19,8 @@ export type Work = {
   coverId: string | null;
   htmlId: string | null;
   coverUrl: string | null;
+  coverMode: "auto" | "manual";
+  coverStatus: AutoCover["status"] | null;
   previewUrl?: string;
   ownerId?: string;
   rank?: number;
@@ -45,8 +52,6 @@ export type Quota = {
 };
 export const statusNames: Record<string, string> = {
   draft: "草稿",
-  pending: "待审核",
   approved: "已公开",
-  rejected: "需修改",
   withdrawn: "已撤回",
 };

@@ -193,7 +193,7 @@ export function App() {
     }
   };
   useEffect(() => {
-    document.title = `${competition?.title || "超级码力"} · 1024 程序员节内源社区活动`;
+    document.title = `${competition?.title || "超级码力"} · 1024 程序员节 · Relay 创造营`;
   }, [competition?.title]);
   const isHome = route === "/" || route === "/gallery";
   return (
@@ -347,7 +347,7 @@ export function App() {
           <Code2 size={25} />
           <strong>
             {competition?.title || "超级码力"}
-            <span>1024 程序员节 · 内源社区活动</span>
+            <span>1024 程序员节 · Relay 创造营</span>
           </strong>
         </a>
         <div>
@@ -712,8 +712,8 @@ function WorkDetail({
               </span>
               <h1>{w.title}</h1>
               <p className="muted">
-                使用 {w.model} 创作
-                {w.ownerId ? ` · 作者 ${w.ownerId}` : " · 作者评选期间匿名"}
+                {w.model ? `使用 ${w.model} 创作 · ` : ""}
+                {w.ownerId ? `作者 ${w.ownerId}` : "作者评选期间匿名"}
               </p>
             </div>
             <button
@@ -799,10 +799,12 @@ function WorkDetail({
             )}
           </div>
           <div className="detail-copy">
-            <section>
-              <h2>关于这个灵感</h2>
-              <p>{w.description}</p>
-            </section>
+            {w.description && (
+              <section>
+                <h2>关于这个灵感</h2>
+                <p>{w.description}</p>
+              </section>
+            )}
             <section>
               <h2>创作提示词</h2>
               <p className="prompt-block">{w.prompt}</p>

@@ -69,11 +69,17 @@ try {
       "SELECT count(*)::integer AS n FROM daily_quotas WHERE day=(now() AT TIME ZONE 'Asia/Shanghai')::date AND used>10",
     )
   ).rows[0].n;
-  const missingAudits = (
+  const missingReviewAudits = (
     await pool.query(
       "SELECT count(*)::integer AS n FROM reviews r WHERE NOT EXISTS(SELECT 1 FROM audit_logs a WHERE a.action='review' AND a.target=r.work_id::text AND a.actor_id=r.actor_id AND a.detail->>'version'=r.version::text AND a.detail->>'decision'=r.decision AND a.detail->>'reason'=r.reason)",
     )
   ).rows[0].n;
+  const missingPublishAudits = (
+    await pool.query(
+      "SELECT count(*)::integer AS n FROM works w JOIN assets h ON h.id=w.html_id WHERE w.status='approved' AND h.managed AND NOT EXISTS(SELECT 1 FROM audit_logs a WHERE a.action='work.publish' AND a.target=w.id::text AND a.actor_id=w.owner_id)",
+    )
+  ).rows[0].n;
+  const missingAudits = missingReviewAudits + missingPublishAudits;
   const duplicateVotes = (
     await pool.query(
       "SELECT count(*)::integer AS n FROM (SELECT user_id,work_id,day FROM votes GROUP BY user_id,work_id,day HAVING count(*)>1) d",
@@ -91,6 +97,7 @@ try {
     quotaOver,
     badOwners,
     missingAudits,
+    missingPublishAudits,
     duplicateVotes,
   };
   await mkdir(path.dirname(output), { recursive: true });

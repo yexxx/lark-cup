@@ -245,7 +245,7 @@ export function Gallery({
       </section>
       <section className="arcade-invitation">
         <div>
-          <span>1024 程序员节 · 内源社区活动</span>
+          <span>1024 程序员节 · Relay 创造营</span>
           <h2>下一份超级创意，由你创造。</h2>
         </div>
         <a className="button primary" href="#/submit">
@@ -306,7 +306,7 @@ function Card({
           {w.title}
         </a>
         <div className="arcade-card-meta">
-          <span>{w.model}</span>
+          {w.model && <span>{w.model}</span>}
           <button
             className={`arcade-vote ${voted || added ? "voted" : ""}`}
             disabled={busy || voted || added}

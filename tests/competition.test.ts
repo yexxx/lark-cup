@@ -101,6 +101,7 @@ before(async () => {
     cache: new Cache(true),
     uploads: folder,
     now: () => now,
+    startCoverWorker: false,
   });
   owner = (await login("test-author")).json().user.id;
   admin = (await login("admin")).json().user.id;
@@ -180,7 +181,7 @@ test("SVG disguise, missing files and oversize uploads are rejected", async () =
     413,
   );
 });
-test("draft → submit → review; private preview token and public isolation headers", async () => {
+test("draft → publish; private preview token and public isolation headers", async () => {
   const r = await servers.app.inject({
     method: "POST",
     url: "/api/v1/works",
@@ -213,13 +214,7 @@ test("draft → submit → review; private preview token and public isolation he
     headers: cookie(owner),
   });
   assert.equal(sub.statusCode, 200, sub.body);
-  const review = await servers.app.inject({
-    method: "POST",
-    url: `/api/v1/admin/works/${workId}/review`,
-    headers: cookie(admin),
-    payload: { decision: "approved", reason: "", version: 1 },
-  });
-  assert.equal(review.statusCode, 200, review.body);
+  assert.equal(sub.json().status, "approved");
   const pub = await servers.app.inject(`/api/v1/works/${workId}`);
   assert.equal(pub.statusCode, 200);
   assert.equal(pub.json().ownerId, undefined);
@@ -236,7 +231,7 @@ test("draft → submit → review; private preview token and public isolation he
     404,
   );
 });
-test("unauthorized users cannot edit or approve another work; foreign assets denied", async () => {
+test("unauthorized users cannot edit or publish another work; foreign assets denied", async () => {
   await login("outsider");
   const edit = await servers.app.inject({
     method: "PUT",
@@ -247,11 +242,10 @@ test("unauthorized users cannot edit or approve another work; foreign assets den
   assert.equal(edit.statusCode, 404);
   const approve = await servers.app.inject({
     method: "POST",
-    url: `/api/v1/admin/works/${workId}/review`,
-    headers: cookie(owner),
-    payload: { decision: "approved", reason: "", version: 1 },
+    url: `/api/v1/works/${workId}/submit`,
+    headers: cookie(uid("outsider")),
   });
-  assert.equal(approve.statusCode, 403);
+  assert.equal(approve.statusCode, 404);
   const foreign = await servers.app.inject({
     method: "POST",
     url: "/api/v1/works",
@@ -369,7 +363,7 @@ test("closed windows reject submissions and votes on server", async () => {
     JSON.stringify(s),
   ]);
 });
-test("approved edit returns to draft; stale version fails; rejection/resubmit/withdraw work", async () => {
+test("published edit stays visible; stale version fails; withdraw and republish work", async () => {
   const r = await servers.app.inject({
     method: "PUT",
     url: `/api/v1/works/${workId}`,
@@ -377,10 +371,10 @@ test("approved edit returns to draft; stale version fails; rejection/resubmit/wi
     payload: { ...base, coverId, htmlId, version: 1 },
   });
   assert.equal(r.statusCode, 200, r.body);
-  assert.equal(r.json().status, "draft");
+  assert.equal(r.json().status, "approved");
   assert.equal(
     (await servers.app.inject(`/api/v1/works/${workId}`)).statusCode,
-    404,
+    200,
   );
   const stale = await servers.app.inject({
     method: "PUT",
@@ -401,20 +395,6 @@ test("approved edit returns to draft; stale version fails; rejection/resubmit/wi
     url: `/api/v1/works/${workId}/submit`,
     headers: cookie(owner),
   });
-  let review = await servers.app.inject({
-    method: "POST",
-    url: `/api/v1/admin/works/${workId}/review`,
-    headers: cookie(admin),
-    payload: { decision: "rejected", reason: "补充说明", version: 2 },
-  });
-  assert.equal(review.statusCode, 200);
-  const rejected = (
-    await servers.app.inject({
-      url: `/api/v1/works/${workId}`,
-      headers: cookie(owner),
-    })
-  ).json();
-  assert.equal(rejected.reason, "补充说明");
   assert.equal(
     (
       await servers.app.inject({

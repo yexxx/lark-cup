@@ -31,7 +31,7 @@ export function HomeIntro({
       <section className="adventure-hero" aria-labelledby="activity-title">
         <div className="adventure-content">
           <span className="event-kicker">
-            <Code2 size={16} /> 1024 程序员节 · 内源社区活动
+            <Code2 size={16} /> 1024 程序员节 · Relay 创造营
           </span>
           <h1 id="activity-title">{competition.title}</h1>
           <p className="event-tagline">{competition.tagline}</p>
@@ -100,7 +100,7 @@ export function HomeIntro({
             <span className="step-number">03</span>
             <div>
               <strong>展示与投票</strong>
-              <p>审核通过后展示，为创意加油</p>
+              <p>发布后直接展示，为创意加油</p>
             </div>
           </li>
         </ol>

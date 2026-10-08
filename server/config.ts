@@ -12,6 +12,8 @@ export const config = {
   databaseUrl: process.env.DATABASE_URL,
   redisUrl: process.env.REDIS_URL,
   uploads: path.resolve(process.env.UPLOAD_DIR || ".local/uploads"),
+  rendererUrl: process.env.COVER_RENDERER_URL || "http://127.0.0.1:3003",
+  coverTimeout: number("COVER_TIMEOUT_MS", 8000),
   localDatabaseDir: path.resolve(
     process.env.LOCAL_DATABASE_DIR || ".local/postgres",
   ),

@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { api, send } from "../src/api.js";
+import { api, send, upload } from "../src/api.js";
 import { updateSession } from "../src/session.js";
 
 test("public startup data survives an authentication change", async () => {
@@ -18,6 +18,62 @@ test("public startup data survives an authentication change", async () => {
     assert.deepEqual(await startup, { title: "活动" });
   } finally {
     globalThis.fetch = original;
+    updateSession(null, true);
+  }
+});
+
+test("upload replacement and account changes cancel XHR and discard old responses", async () => {
+  const original = globalThis.XMLHttpRequest;
+  const requests: any[] = [];
+  class MockXHR {
+    upload = {};
+    status = 200;
+    responseText = '{"id":"old","kind":"html"}';
+    onabort?: () => void;
+    onload?: () => void;
+    onloadend?: () => void;
+    open() {}
+    setRequestHeader() {}
+    send() {
+      requests.push(this);
+    }
+    abort() {
+      this.onabort?.();
+      this.onloadend?.();
+    }
+  }
+  globalThis.XMLHttpRequest = MockXHR as any;
+  updateSession("upload-user-a", true);
+  try {
+    const controller = new AbortController();
+    const replaced = upload(
+      new File(["html"], "one.html"),
+      () => {},
+      controller.signal,
+    ).then(
+      () => "accepted",
+      (e) => e.name,
+    );
+    await new Promise<void>((r) => setImmediate(r));
+    controller.abort();
+    assert.equal(await replaced, "AbortError");
+    requests[0].onload();
+    const stale = upload(new File(["html"], "two.html"), () => {}).then(
+      () => "accepted",
+      (e) => e.name,
+    );
+    await new Promise<void>((r) => setImmediate(r));
+    updateSession("upload-user-b", true);
+    assert.equal(await stale, "AbortError");
+    requests[1].onload();
+    const current = upload(new File(["html"], "three.html"), () => {});
+    await new Promise<void>((r) => setImmediate(r));
+    requests[2].responseText = '{"id":"new","kind":"html"}';
+    requests[2].onload();
+    requests[2].onloadend();
+    assert.equal((await current).id, "new");
+  } finally {
+    globalThis.XMLHttpRequest = original;
     updateSession(null, true);
   }
 });
