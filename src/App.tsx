@@ -554,7 +554,7 @@ function Login({
             disabled={busy}
             onChange={(e) => setPassword(e.target.value)}
           />
-          <small>15～128 个字符，支持空格和中文。</small>
+          <small>8～128 个字符，支持空格和中文。</small>
         </label>
         {register && (
           <label>
@@ -646,7 +646,7 @@ function ChangePassword({
             value={newPassword}
             onChange={(e) => setNewPassword(e.target.value)}
           />
-          <small>15～128 个字符，支持空格和中文。</small>
+          <small>8～128 个字符，支持空格和中文。</small>
         </label>
         <label>
           确认新密码

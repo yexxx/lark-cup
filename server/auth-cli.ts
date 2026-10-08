@@ -28,7 +28,7 @@ async function main() {
     const username = await rl.question("用户名：");
     const name =
       command === "create-admin" ? await rl.question("显示姓名：") : "";
-    process.stdout.write("密码（15～128 个字符）：");
+    process.stdout.write("密码（8～128 个字符）：");
     muted = true;
     const password = await rl.question("");
     muted = false;

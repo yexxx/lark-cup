@@ -12,8 +12,8 @@ export const usernameSchema = z
   .transform((s) => s.toLowerCase());
 export const passwordSchema = z.string().refine((s) => {
   const length = [...s].length;
-  return length >= 15 && length <= 128;
-}, "密码需要 15～128 个字符");
+  return length >= 8 && length <= 128;
+}, "密码需要 8～128 个字符");
 const N = 131072,
   r = 8,
   p = 1;

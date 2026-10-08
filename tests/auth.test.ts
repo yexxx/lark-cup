@@ -22,7 +22,7 @@ let db: DB, servers: Awaited<ReturnType<typeof buildApp>>, folder: string;
 const initialTime = new Date("2026-10-03T10:00:00+08:00");
 let now = initialTime;
 const password = "local password 这是测试密码 🔑";
-const changedPassword = "updated password 这是新密码 🔐";
+const changedPassword = "新密码 🔐abc";
 let client = 1;
 const cookieOf = (r: { headers: Record<string, unknown> }) =>
   ([] as string[])
@@ -83,7 +83,7 @@ test("registration validates credentials, generates stable IDs and grants partic
       await write("/auth/register", {
         username: "short",
         name: "甲",
-        password: "short",
+        password: "short12",
       })
     ).statusCode,
     400,
@@ -109,6 +109,15 @@ test("registration validates credentials, generates stable IDs and grants partic
     ).statusCode,
     400,
   );
+  const eightCharacterPassword = "test1234";
+  const boundary = await write("/auth/register", {
+    username: "eight_characters",
+    name: "八位密码",
+    password: eightCharacterPassword,
+  });
+  assert.equal(boundary.statusCode, 200, boundary.body);
+  const signedIn = await login("eight_characters", eightCharacterPassword);
+  assert.equal(signedIn.statusCode, 200, signedIn.body);
   const a = await register("Admin"),
     b = await register("another");
   assert.equal(a.user.role, "user");
@@ -381,10 +390,11 @@ test("password change and server reset invalidate every device and enforce the n
   assert.equal((await login("passwords")).statusCode, 401);
   const updated = await login("passwords", changedPassword);
   assert.equal(updated.statusCode, 200, updated.body);
-  await resetLocalPassword(db, "PASSWORDS", password);
+  const resetPassword = "reset123";
+  await resetLocalPassword(db, "PASSWORDS", resetPassword);
   assert.equal((await read("/auth/me", cookieOf(updated))).json().user, null);
   assert.equal((await login("passwords", changedPassword)).statusCode, 401);
-  assert.equal((await login("passwords")).statusCode, 200);
+  assert.equal((await login("passwords", resetPassword)).statusCode, 200);
 });
 test("disabling a user revokes every session and re-enabling requires fresh login", async () => {
   await createLocalAccount(

@@ -34,7 +34,7 @@ docker compose exec api npm run auth:create-admin
 docker compose exec api npm run auth:reset-password
 ```
 
-命令依次询问用户名、显示姓名（创建管理员时）和两次密码。密码输入隐藏，长度为 15～128 个字符。密码重置会立即撤销该账号全部会话。请通过核实身份的管理员流程处理密码重置请求。
+命令依次询问用户名、显示姓名（创建管理员时）和两次密码。密码输入隐藏，长度为 8～128 个字符。密码重置会立即撤销该账号全部会话。请通过核实身份的管理员流程处理密码重置请求。
 
 本地 PGlite 管理命令为 `npm run auth:create-admin` / `npm run auth:reset-password`；先停止开发服务，以便命令独占本地数据库目录。新建本地比赛可设置 `LOCAL_DATABASE_DIR=.local/新比赛/postgres` 与 `UPLOAD_DIR=.local/新比赛/uploads`，运行服务和管理命令时保持相同配置。生产 PostgreSQL 支持在运行中的 API 容器执行管理命令。TLS 部署命令同时带上两个 `-f` 参数。
 
