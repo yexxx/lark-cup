@@ -31,11 +31,21 @@ import { SubmitPage, MyWorks } from "./Submit";
 import { Admin } from "./Admin";
 import { HomeIntro } from "./HomeIntro";
 import { Gallery } from "./Gallery";
+import { GuideButton, GuideProvider, useGuide, usePageGuide } from "./Guide";
+import { detailGuide, loginGuide } from "./guides";
 
 const navigate = (path: string) => {
   location.hash = path;
 };
 export function App() {
+  return (
+    <GuideProvider>
+      <AppContent />
+    </GuideProvider>
+  );
+}
+function AppContent() {
+  const { close: closeGuide } = useGuide();
   const [route, setRoute] = useState(location.hash.slice(1) || "/");
   const [user, setUser] = useState<User | null>(null);
   const [competition, setCompetition] = useState<Competition | null>(null);
@@ -50,6 +60,10 @@ export function App() {
   const [toast, setToast] = useState("");
   const [startupError, setStartupError] = useState("");
   const [mobile, setMobile] = useState(false);
+  useEffect(
+    () => closeGuide(false),
+    [route, authRevision, authOpen, passwordOpen, info, closeGuide],
+  );
   const notify = useCallback((text: string) => setToast(text), []);
   const applyUser = useCallback((u: User | null, force = false) => {
     const changed = currentUser.current?.id !== u?.id;
@@ -196,6 +210,12 @@ export function App() {
     document.title = `${competition?.title || "超级码力"} · 1024 程序员节 · Relay 创造营`;
   }, [competition?.title]);
   const isHome = route === "/" || route === "/gallery";
+  const hasGuide =
+    isHome ||
+    route === "/ranking" ||
+    route === "/mine" ||
+    /^\/work\/[^/]+$/.test(route) ||
+    /^\/submit(?:\/[^/]+)?$/.test(route);
   return (
     <>
       <header className="header">
@@ -217,6 +237,12 @@ export function App() {
           </a>
           <button onClick={() => setInfo("rules")}>活动规则</button>
           <button onClick={() => setInfo("prizes")}>奖项设置</button>
+          {hasGuide && (
+            <GuideButton
+              disabled={!!startupError}
+              beforeStart={() => setMobile(false)}
+            />
+          )}
           {mobile && user && (
             <button
               onClick={() => {
@@ -292,6 +318,7 @@ export function App() {
           )}
           {isHome || route === "/ranking" ? (
             <Gallery
+              home={route === "/"}
               key={`${authRevision}:${route === "/ranking" ? "ranking" : "gallery"}`}
               ranking={route === "/ranking"}
               quota={quota}
@@ -301,15 +328,17 @@ export function App() {
               login={() => setAuthOpen(true)}
               rules={() => setInfo("rules")}
             />
-          ) : route.startsWith("/work/") ? (
+          ) : /^\/work\/[^/]+$/.test(route) ? (
             <WorkDetail
               key={`${authRevision}:${route}`}
               id={route.split("/")[2]}
               vote={vote}
               quota={quota}
               notify={notify}
+              competition={competition}
+              user={user}
             />
-          ) : route.startsWith("/submit") ? (
+          ) : /^\/submit(?:\/[^/]+)?$/.test(route) ? (
             <SubmitPage
               key={`${authRevision}:${route}`}
               id={route.split("/")[2]}
@@ -353,6 +382,7 @@ export function App() {
         <div>
           <a href="#/mine">我的作品</a>
           <button onClick={() => setInfo("rules")}>活动规则</button>
+          {hasGuide && <GuideButton disabled={!!startupError} />}
           <a href="#/admin">管理后台</a>
           <span>SUPER CODE / 1024</span>
         </div>
@@ -453,6 +483,7 @@ function Login({
   const [confirmation, setConfirmation] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  usePageGuide(loginGuide(register, busy));
   return (
     <Modal
       title="欢迎来到超级码力"
@@ -483,7 +514,8 @@ function Login({
           }
         }}
       >
-        <div className="segmented">
+        <GuideButton />
+        <div className="segmented" data-guide="auth-mode">
           <button
             type="button"
             disabled={busy}
@@ -511,70 +543,78 @@ function Login({
             注册
           </button>
         </div>
-        <label>
-          用户名
-          <input
-            name="username"
-            autoComplete="username"
-            autoCapitalize="none"
-            spellCheck={false}
-            required
-            pattern="[a-zA-Z0-9_-]{3,32}"
-            maxLength={32}
-            value={username}
-            disabled={busy}
-            onChange={(e) => setUsername(e.target.value)}
-          />
-          <small>
-            3～32 位英文字母、数字、下划线或短横线，大小写统一处理。
-          </small>
-        </label>
-        {register && (
+        <div className="guide-fields" data-guide="auth-account">
           <label>
-            显示姓名
+            用户名
             <input
-              name="name"
-              autoComplete="nickname"
+              name="username"
+              autoComplete="username"
+              autoCapitalize="none"
+              spellCheck={false}
               required
-              maxLength={40}
-              value={name}
+              pattern="[a-zA-Z0-9_-]{3,32}"
+              maxLength={32}
+              value={username}
               disabled={busy}
-              onChange={(e) => setName(e.target.value)}
+              onChange={(e) => setUsername(e.target.value)}
             />
+            <small>
+              3～32 位英文字母、数字、下划线或短横线，大小写统一处理。
+            </small>
           </label>
-        )}
-        <label>
-          密码
-          <input
-            name="password"
-            type="password"
-            autoComplete={register ? "new-password" : "current-password"}
-            required
-            value={password}
-            disabled={busy}
-            onChange={(e) => setPassword(e.target.value)}
-          />
-          <small>8～128 个字符，支持空格和中文。</small>
-        </label>
-        {register && (
+          {register && (
+            <label>
+              显示姓名
+              <input
+                name="name"
+                autoComplete="nickname"
+                required
+                maxLength={40}
+                value={name}
+                disabled={busy}
+                onChange={(e) => setName(e.target.value)}
+              />
+            </label>
+          )}
+        </div>
+        <div className="guide-fields" data-guide="auth-password">
           <label>
-            确认密码
+            密码
             <input
-              name="confirmation"
+              name="password"
               type="password"
-              autoComplete="new-password"
+              autoComplete={register ? "new-password" : "current-password"}
               required
-              value={confirmation}
+              value={password}
               disabled={busy}
-              onChange={(e) => setConfirmation(e.target.value)}
+              onChange={(e) => setPassword(e.target.value)}
             />
+            <small>8～128 个字符，支持空格和中文。</small>
           </label>
-        )}
+          {register && (
+            <label>
+              确认密码
+              <input
+                name="confirmation"
+                type="password"
+                autoComplete="new-password"
+                required
+                value={confirmation}
+                disabled={busy}
+                onChange={(e) => setConfirmation(e.target.value)}
+              />
+            </label>
+          )}
+        </div>
         {error && <ErrorBox message={error} />}
         {!register && (
           <p className="muted">忘记密码时，请联系赛事管理员重置。</p>
         )}
-        <button disabled={busy} className="button primary">
+        <button
+          disabled={busy}
+          className="button primary"
+          data-guide="auth-submit"
+        >
           {busy ? "正在处理…" : register ? "注册并进入比赛" : "登录并进入比赛"}
           <ArrowRight size={18} />
         </button>
@@ -674,11 +714,15 @@ function WorkDetail({
   vote,
   quota,
   notify,
+  competition,
+  user,
 }: {
   id: string;
   vote: (w: Work) => Promise<boolean>;
   quota: Quota | null;
   notify: (s: string) => void;
+  competition: Competition;
+  user: User | null;
 }) {
   const [w, setW] = useState<Work | null>(null);
   const [error, setError] = useState("");
@@ -686,6 +730,7 @@ function WorkDetail({
   const [key, setKey] = useState(0);
   const [busy, setBusy] = useState(false);
   const [reload, setReload] = useState(0);
+  usePageGuide(detailGuide(w, competition, user, quota, !!w && !error));
   useEffect(() => {
     setW(null);
     setError("");
@@ -696,7 +741,7 @@ function WorkDetail({
   }, [id, reload]);
   return (
     <main className="container detail">
-      <a href="#/gallery" className="back-link">
+      <a href="#/gallery" className="back-link" data-guide="detail-back">
         ← 返回作品展区
       </a>
       {error ? (
@@ -718,6 +763,7 @@ function WorkDetail({
             </div>
             <button
               className="button primary"
+              data-guide="detail-vote"
               disabled={
                 busy ||
                 quota?.votedIds.includes(w.id) ||
@@ -743,6 +789,7 @@ function WorkDetail({
             </span>
             <div>
               <button
+                data-guide="detail-share"
                 onClick={() => {
                   navigator.clipboard
                     .writeText(location.href)
@@ -759,6 +806,7 @@ function WorkDetail({
                 </button>
               )}
               <button
+                data-guide="detail-preview"
                 onClick={async () => {
                   if (!preview) {
                     try {

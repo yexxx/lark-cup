@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import { App } from "./App";
 import "./style.css";
 import "./arcade.css";
+import "./guide.css";
 class Boundary extends React.Component<
   { children: React.ReactNode },
   { failed: boolean }

@@ -4,6 +4,8 @@ import { FlightScene } from "./FlightScene";
 import type { Competition } from "./types";
 import { formatDate } from "./ui";
 import { activityWindow } from "./activity";
+import { usePageGuide } from "./Guide";
+import { homeGuide } from "./guides";
 export function HomeIntro({
   competition,
   notify,
@@ -11,6 +13,7 @@ export function HomeIntro({
   competition: Competition;
   notify: (s: string) => void;
 }) {
+  usePageGuide(homeGuide(competition));
   const [now, setNow] = useState(Date.now());
   useEffect(() => {
     const id = setInterval(() => setNow(Date.now()), 1000);
@@ -37,14 +40,22 @@ export function HomeIntro({
           <p className="event-tagline">{competition.tagline}</p>
           <p className="event-description">{competition.description}</p>
           <div className="adventure-actions">
-            <a className="button primary" href="#/submit">
+            <a
+              className="button primary"
+              href="#/submit"
+              data-guide="home-create"
+            >
               开始创作 <ArrowUpRight size={18} />
             </a>
-            <a className="button secondary" href="#/gallery">
+            <a
+              className="button secondary"
+              href="#/gallery"
+              data-guide="home-browse"
+            >
               浏览作品 <ArrowRight size={18} />
             </a>
           </div>
-          <div className="event-schedule">
+          <div className="event-schedule" data-guide="home-schedule">
             <span>
               <Flag size={14} /> 投稿{submission}
             </span>
@@ -59,7 +70,7 @@ export function HomeIntro({
             <span className="eyebrow">THE CHALLENGE / 创作挑战</span>
             <h2 id="challenge-title">同一道题，无限种码力。</h2>
           </div>
-          <div className="challenge-body">
+          <div className="challenge-body" data-guide="home-prompt">
             <p>{competition.prompt}</p>
             <div className="challenge-actions">
               <button
@@ -93,7 +104,7 @@ export function HomeIntro({
             <span className="step-number">02</span>
             <div>
               <strong>创作并提交</strong>
-              <p>用 AI 创作，上传 HTML 与封面</p>
+              <p>提交 HTML，自动生成封面</p>
             </div>
           </li>
           <li>

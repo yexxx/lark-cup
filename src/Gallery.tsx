@@ -18,7 +18,10 @@ import { api } from "./api";
 import type { User } from "./auth";
 import type { Work, Competition, Quota } from "./types";
 import { ErrorBox, Loading, Pagination } from "./ui";
+import { usePageGuide } from "./Guide";
+import { galleryGuide } from "./guides";
 export function Gallery({
+  home = false,
   ranking,
   quota,
   user,
@@ -27,6 +30,7 @@ export function Gallery({
   login,
   rules,
 }: {
+  home?: boolean;
   ranking: boolean;
   quota: Quota | null;
   user: User | null;
@@ -52,6 +56,18 @@ export function Gallery({
     votes: number;
     creators: number;
   } | null>(null);
+  usePageGuide(
+    home
+      ? null
+      : galleryGuide(
+          ranking,
+          competition,
+          user,
+          quota,
+          !!data && !error,
+          data?.items[0],
+        ),
+  );
   useEffect(() => {
     const t = setTimeout(() => {
       setSearch(query);
@@ -98,7 +114,11 @@ export function Gallery({
           <span className="sidebar-kicker">
             <Code2 size={16} /> 码力探索站
           </span>
-          <nav className="discovery-nav" aria-label="作品浏览方式">
+          <nav
+            className="discovery-nav"
+            aria-label="作品浏览方式"
+            data-guide="gallery-nav"
+          >
             <a className={!ranking ? "selected" : ""} href="#/gallery">
               <Compass size={18} />
               发现作品<span>{stats?.works ?? "…"}</span>
@@ -109,7 +129,7 @@ export function Gallery({
             </a>
           </nav>
           {!ranking && (
-            <div className="sort-options">
+            <div className="sort-options" data-guide="gallery-sort">
               <span>发现你的灵感</span>
               {[
                 ["recommended", "编辑精选", Sparkles],
@@ -133,7 +153,7 @@ export function Gallery({
               })}
             </div>
           )}
-          <div className="vote-pocket">
+          <div className="vote-pocket" data-guide="gallery-quota">
             <span>
               <Heart size={16} /> 今日剩余票数
             </span>
@@ -164,7 +184,7 @@ export function Gallery({
       </div>
       <section className="discovery-main">
         <div className="discovery-toolbar">
-          <div>
+          <div data-guide="gallery-heading">
             <h2>{ranking ? "码力人气榜" : "发现超级创意"}</h2>
             <p>
               {ranking
@@ -175,7 +195,7 @@ export function Gallery({
             </p>
           </div>
           {!ranking && (
-            <label className="arcade-search">
+            <label className="arcade-search" data-guide="gallery-search">
               <Search size={18} />
               <input
                 aria-label="搜索作品名称或编号"
@@ -192,6 +212,7 @@ export function Gallery({
           )}
           <button
             className="refresh-circle"
+            data-guide="ranking-updated"
             title="刷新作品"
             aria-label="刷新作品"
             onClick={() => setRefresh((n) => n + 1)}
@@ -214,7 +235,7 @@ export function Gallery({
         ) : !data ? (
           <Loading />
         ) : !data.items.length ? (
-          <div className="state empty">
+          <div className="state empty" data-guide="gallery-empty">
             <Bird size={42} />
             <h3>{search ? "暂时没有找到匹配作品" : "你的创意，等你来点亮"}</h3>
             <p>换个词找找，或带着你的百灵鸟来参赛。</p>
@@ -280,7 +301,11 @@ function Card({
           {String(w.rank).padStart(2, "0")}
         </span>
       )}
-      <a className="work-cover" href={`#/work/${w.id}`}>
+      <a
+        className="work-cover"
+        href={`#/work/${w.id}`}
+        data-guide="gallery-open"
+      >
         {w.coverUrl ? (
           <img src={w.coverUrl} alt={w.title} loading="lazy" />
         ) : (
@@ -309,6 +334,7 @@ function Card({
           {w.model && <span>{w.model}</span>}
           <button
             className={`arcade-vote ${voted || added ? "voted" : ""}`}
+            data-guide="gallery-vote"
             disabled={busy || voted || added}
             aria-label={`为${w.title}投票，当前${w.votes + (added ? 1 : 0)}票`}
             onClick={async () => {

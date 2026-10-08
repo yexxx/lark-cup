@@ -16,6 +16,7 @@
     "auth:create-admin": "tsx server/auth-cli.ts create-admin",
     "auth:reset-password": "tsx server/auth-cli.ts reset-password",
     "test": "tsx --test --test-concurrency=1 tests/*.test.ts",
+    "test:guide": "tsx scripts/guide-qa.ts",
     "test:load": "tsx scripts/load.ts",
     "load:env": "tsx scripts/load/env.ts",
     "load:suite": "tsx scripts/load/suite.ts",

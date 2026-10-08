@@ -6,6 +6,20 @@ import {
   LoaderCircle,
   AlertCircle,
 } from "lucide-react";
+let scrollLocks = 0;
+let previousOverflow = "";
+/** Modal layers share one lock so closing a layer preserves the remaining dialogs. */
+export function lockBodyScroll() {
+  if (scrollLocks === 0) previousOverflow = document.body.style.overflow;
+  scrollLocks++;
+  document.body.style.overflow = "hidden";
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    if (--scrollLocks === 0) document.body.style.overflow = previousOverflow;
+  };
+}
 export const formatDate = (s: string) =>
   new Date(s).toLocaleDateString("zh-CN", {
     timeZone: "Asia/Shanghai",
@@ -27,11 +41,10 @@ export function Modal({
   useEffect(() => {
     const d = ref.current!;
     d.showModal();
-    const old = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
+    const unlockScroll = lockBodyScroll();
     return () => {
       d.close();
-      document.body.style.overflow = old;
+      unlockScroll();
     };
   }, []);
   return (

@@ -33,6 +33,8 @@ import {
   type UploadKind,
 } from "./uploads";
 import { ErrorBox, Loading, Modal } from "./ui";
+import { GuideButton, usePageGuide } from "./Guide";
+import { mineGuide, submitGuide } from "./guides";
 export function SubmitPage({
   id,
   user,
@@ -79,6 +81,14 @@ export function SubmitPage({
   const [loaded, setLoaded] = useState(!id);
   const [saveId, setSaveId] = useState(id);
   const [confirm, setConfirm] = useState(false);
+  usePageGuide(
+    submitGuide(
+      competition,
+      user,
+      !user || (loaded && !busy && !transfers.html && !transfers.cover),
+      published,
+    ),
+  );
   useEffect(() => {
     return () => {
       operations.current.html++;
@@ -355,12 +365,17 @@ export function SubmitPage({
         <span className="eyebrow">1024 · 开启你的创作挑战</span>
         <h1>{id ? "打磨你的灵感" : "让你的超级创意，正式登场。"}</h1>
         <p className="muted">从一行提示词开始，让世界听见你的创意。</p>
+        <GuideButton />
       </div>
       {!user ? (
         <div className="state">
           <Bird size={40} />
           <h3>先选一个身份，再开启创作</h3>
-          <button className="button primary" onClick={login}>
+          <button
+            className="button primary"
+            onClick={login}
+            data-guide="submit-login"
+          >
             登录并参赛
           </button>
         </div>
@@ -374,7 +389,7 @@ export function SubmitPage({
                 <span>01</span>
                 <h2>领取创作题目</h2>
               </div>
-              <label>
+              <label data-guide="submit-prompt">
                 统一提示词
                 <textarea readOnly rows={3} value={competition.prompt} />
                 <small>所有作品使用同一提示词，以 HTML + SVG 完成创作。</small>
@@ -383,41 +398,43 @@ export function SubmitPage({
                 <span>02</span>
                 <h2>作品信息</h2>
               </div>
-              <label>
-                作品名称 <b>*</b>
-                <input
-                  required
-                  maxLength={80}
-                  placeholder="给你的灵感起个名字"
-                  value={form.title}
-                  onChange={(e) => field("title", e.target.value)}
-                />
-              </label>
-              <label>
-                作品介绍 <small className="optional-label">选填</small>
-                <textarea
-                  maxLength={3000}
-                  rows={4}
-                  placeholder="它有什么故事？可以怎样互动？"
-                  value={form.description}
-                  onChange={(e) => field("description", e.target.value)}
-                />
-              </label>
-              <label>
-                使用的模型 <small className="optional-label">选填</small>
-                <input
-                  maxLength={100}
-                  placeholder="例如：你使用的模型及版本"
-                  value={form.model}
-                  onChange={(e) => field("model", e.target.value)}
-                />
-              </label>
+              <div className="guide-fields" data-guide="submit-info">
+                <label>
+                  作品名称 <b>*</b>
+                  <input
+                    required
+                    maxLength={80}
+                    placeholder="给你的灵感起个名字"
+                    value={form.title}
+                    onChange={(e) => field("title", e.target.value)}
+                  />
+                </label>
+                <label>
+                  作品介绍 <small className="optional-label">选填</small>
+                  <textarea
+                    maxLength={3000}
+                    rows={4}
+                    placeholder="它有什么故事？可以怎样互动？"
+                    value={form.description}
+                    onChange={(e) => field("description", e.target.value)}
+                  />
+                </label>
+                <label>
+                  使用的模型 <small className="optional-label">选填</small>
+                  <input
+                    maxLength={100}
+                    placeholder="例如：你使用的模型及版本"
+                    value={form.model}
+                    onChange={(e) => field("model", e.target.value)}
+                  />
+                </label>
+              </div>
               <div className="form-step">
                 <span>03</span>
                 <h2>上传作品</h2>
               </div>
               <div className="upload-grid">
-                <div className="upload-column">
+                <div className="upload-column" data-guide="submit-cover">
                   <label
                     className="upload-box"
                     tabIndex={0}
@@ -501,7 +518,7 @@ export function SubmitPage({
                     )}
                   </div>
                 </div>
-                <div className="upload-column">
+                <div className="upload-column" data-guide="submit-html">
                   <label
                     className="upload-box"
                     tabIndex={0}
@@ -574,6 +591,7 @@ export function SubmitPage({
                   className="button"
                   type="submit"
                   value="draft"
+                  data-guide="submit-save"
                   disabled={uploading || failed.html || failed.cover}
                 >
                   {published ? "保存更改" : "保存草稿"}
@@ -582,6 +600,7 @@ export function SubmitPage({
                   className="button primary"
                   type="submit"
                   value="submit"
+                  data-guide="submit-publish"
                   disabled={uploading || failed.html || failed.cover}
                 >
                   {busy ? "正在处理…" : "发布作品"}
@@ -697,6 +716,7 @@ export function MyWorks({
   const [refresh, setRefresh] = useState(0);
   const [withdraw, setWithdraw] = useState<Work | null>(null);
   const [busy, setBusy] = useState(false);
+  usePageGuide(mineGuide(user, !user || (!!items && !error && !busy), items));
   useEffect(() => {
     if (!user) return;
     api("/me/works")
@@ -724,13 +744,24 @@ export function MyWorks({
           <h1>我的作品</h1>
           <p className="muted">从草稿到公开展示，记录你的每一步创作。</p>
         </div>
-        <a href="#/submit" className="button primary">
-          新建作品 <Plus size={17} />
-        </a>
+        <div className="heading-actions">
+          <GuideButton />
+          <a
+            href="#/submit"
+            className="button primary"
+            data-guide="mine-create"
+          >
+            新建作品 <Plus size={17} />
+          </a>
+        </div>
       </div>
       {!user ? (
         <div className="state">
-          <button className="button primary" onClick={login}>
+          <button
+            className="button primary"
+            onClick={login}
+            data-guide="mine-login"
+          >
             登录查看作品
           </button>
         </div>
@@ -758,7 +789,7 @@ export function MyWorks({
                 </div>
               )}
               <div>
-                <span className={`status ${w.status}`}>
+                <span className={`status ${w.status}`} data-guide="mine-status">
                   {statusNames[w.status]}
                 </span>
                 <h2>{w.title}</h2>
@@ -769,7 +800,7 @@ export function MyWorks({
                   <p className="review-reason">管理反馈：{w.reason}</p>
                 )}
               </div>
-              <div className="my-actions">
+              <div className="my-actions" data-guide="mine-edit">
                 <a className="button small" href={`#/work/${w.id}`}>
                   <Eye size={15} />
                   预览
@@ -782,6 +813,7 @@ export function MyWorks({
                   <button
                     className="button small primary"
                     disabled={busy}
+                    data-guide="mine-publish"
                     onClick={() => void action(w, "submit")}
                   >
                     <Send size={15} />
@@ -791,6 +823,7 @@ export function MyWorks({
                 {w.status === "approved" && (
                   <button
                     className="button small"
+                    data-guide="mine-withdraw"
                     disabled={busy}
                     onClick={() => setWithdraw(w)}
                   >
